@@ -8,33 +8,9 @@ class BacktestEngine:
         self.strategy = strategy
         self.account = Portfolio(initial_capital)
         self.commission = commission
+        self.initial_capital = initial_capital  # 保存初始资金用于计算盈亏
         self.history = []
 
-    # def run(self):
-    #     for date, bar in self.data.iterrows():
-    #         action, shares = self.strategy.on_bar(bar, self.account)
-    #
-    #         if action:
-    #             self.account.update(action, shares, bar['close'], self.commission)
-    #             self.strategy.record_action(action, bar['close'], date)
-    #
-    #         # 每日快照记录
-    #         equity = self.account.cash + (self.account.total_shares * bar['close'])
-    #         self.history.append({
-    #             "date": date,
-    #             "price": bar['close'],
-    #             "cash": self.account.cash,
-    #             "total_shares": self.account.total_shares,
-    #             "avg_price": self.account.avg_price,
-    #             "total_cost": self.account.total_cost,
-    #             "equity": equity,
-    #             "buy_signal": bar['close'] if action == "BUY" else None,
-    #             "sell_signal": bar['close'] if action == "SELL" else None
-    #         })
-    #
-    #     return pd.DataFrame(self.history).set_index("date")
-
-        # 修改 src/core/engine.py 中的 run 方法
     def run(self):
         used_capital = 0  # 追踪累计投入
         for date, bar in self.data.iterrows():
@@ -52,9 +28,8 @@ class BacktestEngine:
             # --- 关键：完善每日快照 ---
             market_value = self.account.total_shares * bar['close']  # 持仓市值
             equity = self.account.cash + market_value  # 总资产
-            # 浮动盈亏 = 总资产 - 初始资金 (或者用 总资产 - 累计投入 - 剩余现金)
-            # 这里统一使用：总资产 - 初始总资金 = 累计净收益
-            pnl = equity - 200000.0  # 假设初始资金是 20万
+            # 浮动盈亏 = 总资产 - 初始资金
+            pnl = equity - self.initial_capital
 
             self.history.append({
                 "date": date,

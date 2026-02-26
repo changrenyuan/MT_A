@@ -1,171 +1,98 @@
-import math
-import matplotlib.pyplot as plt
-import akshare as ak
-import matplotlib
+import random
+import pandas as pd
+from data_provider.akshare_pd import AkShareProvider
+from strategies.martingale import MartingaleStrategy
+from core.engine import BacktestEngine
+from utils.plotter import Plotter
+import yaml
 
-# 中文显示
-matplotlib.rcParams['font.sans-serif'] = ['SimHei']
-matplotlib.rcParams['axes.unicode_minus'] = False
 
-# =============================
-# 回测函数
-# =============================
-def martingale_backtest_full(
-        symbol,
-        entry_price,
-        first_amount,
-        base_drop,
-        step_factor,
-        growth_factor,
-        max_steps,
-        total_capital,
-        take_profit_pct=0.03,   # 止盈百分比
-        stop_loss_pct=0.1       # 止损百分比
-):
-    stock_df = ak.stock_zh_a_daily(symbol=symbol)
-    dates = stock_df.index.tolist()
-    prices = stock_df['close'].tolist()
+def run_selection_and_backtest(provider, full_market, sort_by_col, label_name, account_cfg, strategy_cfg):
+    print(f"\n{'=' * 20} 基于【{label_name}】筛选 Top 20 {'=' * 20}")
 
-    step = 0
-    cumulative_drop = 0
-    used_capital = 0
-    total_shares = 0
-    total_cost = 0
+    # 筛选并打印
+    top_20 = full_market.nlargest(20, sort_by_col)[['代码', '名称', '最新价', sort_by_col]]
+    print(top_20.to_string(index=False))
 
-    history = []
+    # 随机选择一个
+    target_stock = random.choice(top_20['代码'].tolist())
+    target_name = top_20[top_20['代码'] == target_stock]['名称'].values[0]
+    print(f"\n随机选中股票: {target_stock} ({target_name}) 进行回测...")
 
-    for date, price in zip(dates, prices):
+    # 从配置文件读取策略参数
+    config = {
+        'first_amount': strategy_cfg['first_amount'],
+        'base_drop': strategy_cfg['base_drop'],
+        'step_factor': strategy_cfg['step_factor'],
+        'growth_factor': strategy_cfg['growth_factor'],
+        'max_steps': strategy_cfg['max_steps'],
+        'total_capital': account_cfg['initial_capital'],
+        'take_profit_pct': strategy_cfg['take_profit_pct'],
+        'stop_loss_pct': strategy_cfg['stop_loss_pct']
+    }
 
-        trigger_buy = False
-        buy_shares = 0
-        buy_cost = 0
-        trigger_sell = False
-        sell_amount = 0
+    # 获取回测数据
+    data = provider.get_data(target_stock)
 
-        avg_price = total_cost / total_shares if total_shares > 0 else 0
-        equity = total_shares * price
-        floating_profit = equity - total_cost if total_shares > 0 else 0
+    # 初始化策略（此处可插拔更换策略类）
+    strategy = MartingaleStrategy(config)
 
-        # ---- 卖出逻辑（止盈/止损） ----
-        if total_shares > 0:
-            if price >= avg_price * (1 + take_profit_pct):
-                trigger_sell = True
-                sell_amount = total_shares
-                total_shares = 0
-                total_cost = 0
-            elif price <= avg_price * (1 - stop_loss_pct):
-                trigger_sell = True
-                sell_amount = total_shares
-                total_shares = 0
-                total_cost = 0
+    # 运行引擎
+    engine = BacktestEngine(
+        data, 
+        strategy, 
+        initial_capital=account_cfg['initial_capital'],
+        commission=account_cfg['commission_rate']
+    )
+    results = engine.run()
 
-        # ---- 买入逻辑 ----
-        if step < max_steps:
-            incremental_drop = base_drop * (step_factor ** step)
-            cumulative_drop += incremental_drop
-            trigger_price = entry_price * (1 - cumulative_drop)
+    # 绘图
+    Plotter.plot_results(results, f"{target_stock} {target_name}", f"按{label_name}筛选")
 
-            if price <= trigger_price and used_capital < total_capital:
-                amount = first_amount * (growth_factor ** step)
-                if used_capital + amount > total_capital:
-                    amount = total_capital - used_capital
-                if amount > 0:
-                    buy_shares = math.floor(amount / price / 100) * 100
-                    if buy_shares > 0:
-                        buy_cost = buy_shares * price
-                        used_capital += buy_cost
-                        total_shares += buy_shares
-                        total_cost += buy_cost
-                        trigger_buy = True
-                        step += 1
-                        avg_price = total_cost / total_shares
 
-        equity = total_shares * price
-        floating_profit = equity - total_cost
+def main():
+    # 1. 加载配置
+    with open("config/settings.yaml", "r", encoding="utf-8") as f:
+        full_cfg = yaml.safe_load(f)
+    
+    account_cfg = full_cfg['account']
+    strategy_cfg = full_cfg['strategy']
+    
+    provider = AkShareProvider(cache_dir="data")
+    full_market = None
 
-        history.append({
-            "日期": date,
-            "收盘价": price,
-            "触发买入": trigger_buy,
-            "买入股数": buy_shares,
-            "本次投入": buy_cost,
-            "触发卖出": trigger_sell,
-            "卖出股数": sell_amount,
-            "累计投入": total_cost,
-            "持仓股数": total_shares,
-            "持仓均价": avg_price,
-            "持仓市值": equity,
-            "浮盈": floating_profit
-        })
+    # 1. 尝试获取快照
+    try:
+        print("正在尝试获取全市场实时快照...")
+        full_market = provider.get_market_snapshot()
+    except Exception as e:
+        print(f"\n[警告] 市场快照拉取失败: {e}")
+        print("触发降级机制：手动指定【招商银行】进行策略回测。")
 
-    return history
+        # 构建一个伪造的 DataFrame，确保后续 run_selection_and_backtest 不报错
+        # 这里的列名必须与 akshare 返回的一致（代码、名称、成交额、换手率等）
+        fallback_data = {
+            '代码': ['600036'],  # 招商银行
+            '名称': ['招商银行'],
+            '最新价': [0.0],  # 回测时会拉取历史K线，这里只是占位
+            '成交额': [99999999999],  # 给个极高值确保它在 Top 20 里
+            '换手率': [99.9]
+        }
+        full_market = pd.DataFrame(fallback_data)
 
-# =============================
-# 参数
-# =============================
-symbol = "sh600415"
-entry_price = 25
-first_amount = 10000
-base_drop = 0.01
-step_factor = 1.1
-growth_factor = 1.5
-max_steps = 6
-total_capital = 100000
+    # 2. 执行基于成交额的筛选与回测
+    # 如果是降级模式，top 20 就只有招商银行一只，random.choice 也会选中它
+    try:
+        run_selection_and_backtest(provider, full_market, '成交额', '成交额', account_cfg, strategy_cfg)
+    except Exception as e:
+        print(f"成交额回测环节执行失败: {e}")
 
-history = martingale_backtest_full(symbol, entry_price, first_amount,
-                                   base_drop, step_factor, growth_factor,
-                                   max_steps, total_capital)
+    # 3. 执行基于换手率的筛选与回测
+    try:
+        run_selection_and_backtest(provider, full_market, '换手率', '换手率', account_cfg, strategy_cfg)
+    except Exception as e:
+        print(f"换手率回测环节执行失败: {e}")
 
-# =============================
-# 打印完整每日状态
-# =============================
-print("===== 每日交易明细 =====")
-for h in history:
-    status = []
-    if h['触发买入']:
-        status.append(f"买入 {h['买入股数']}股 / {h['本次投入']:.2f}元")
-    if h['触发卖出']:
-        status.append(f"卖出 {h['卖出股数']}股")
-    if not status:
-        status.append("-")
-    print(f"{h['日期']} | 收盘价: {h['收盘价']:.2f} | {', '.join(status)} | "
-          f"持仓股数: {h['持仓股数']} | 持仓均价: {h['持仓均价']:.2f} | "
-          f"累计投入: {h['累计投入']:.2f} | 浮盈: {h['浮盈']:.2f}")
 
-# =============================
-# 绘图：上下两图
-# =============================
-dates = [h["日期"] for h in history]
-prices = [h["收盘价"] for h in history]
-avg_price_curve = [h["持仓均价"] for h in history]
-equity_curve = [h["持仓市值"] for h in history]
-cumulative_cost_curve = [h["累计投入"] for h in history]
-floating_profit_curve = [h["浮盈"] for h in history]
-
-fig, (ax1, ax2) = plt.subplots(2,1, figsize=(16,10), sharex=True)
-
-# ---- 上图：股价 + 持仓均价 + 买入/卖出点 ----
-ax1.plot(dates, prices, label="股价", color='blue')
-ax1.plot(dates, avg_price_curve, label="持仓均价", color='orange', linestyle='--')
-
-for i, h in enumerate(history):
-    if h['触发买入']:
-        ax1.scatter(h['日期'], h['收盘价'], color='red', marker='^', s=120)
-    if h['触发卖出']:
-        ax1.scatter(h['日期'], h['收盘价'], color='green', marker='v', s=120)
-
-ax1.set_ylabel("价格")
-ax1.set_title(f"{symbol} 回测 - 马丁策略每日状态")
-ax1.legend()
-ax1.grid(True)
-
-# ---- 下图：累计投入 + 持仓市值 + 浮盈 ----
-ax2.plot(dates, cumulative_cost_curve, label="累计投入", color='purple', linestyle='--')
-ax2.plot(dates, equity_curve, label="持仓市值", color='green')
-ax2.plot(dates, floating_profit_curve, label="浮盈", color='red')
-ax2.set_xlabel("日期")
-ax2.set_ylabel("资金 / 市值 / 浮盈")
-ax2.legend()
-ax2.grid(True)
-
-plt.show()
+if __name__ == "__main__":
+    main()
