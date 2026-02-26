@@ -1,0 +1,20 @@
+# 基础账户配置
+account:
+  initial_capital: 100000.0
+  commission_rate: 0.0003  # 手续费万三
+
+# 马丁格尔策略核心参数
+strategy:
+  first_amount: 10000.0    # 第一笔买入金额
+  base_drop: 0.03          # 基础跌幅 (3%)
+  step_factor: 1.1         # 跌幅步进 (每层跌幅增加倍数)
+  growth_factor: 1.5       # 资金倍增 (每层投入增加倍数)
+  max_steps: 5             # 最大补仓层数 (超过则停止补仓，持仓不动或止损)
+  take_profit_pct: 0.08    # 止盈目标 (8%)
+  stop_loss_pct: 0.15      # 全仓止损 (15%)
+
+# 启动与退出机制
+mechanism:
+  entry_type: "immediate"   # 启动方式: immediate(立即启动), signal(待信号)
+  exit_after_cycles: 0      # 运行多少个获利周期后停止回测 (0为运行到底)
+  re_entry_delay: 1         # 获利出场后，等待多少个交易日再次进场
