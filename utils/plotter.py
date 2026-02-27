@@ -139,11 +139,11 @@ class Plotter:
         """
         从多股票结果中提取单只股票的独立绩效数据
         
-        计算该股票独立的：
-        - 持仓市值 = shares * price
-        - 持仓成本
-        - 浮动盈亏 = 持仓市值 - 持仓成本
-        - 回撤（基于持仓市值峰值）
+        使用虚拟账户数据：
+        - 虚拟现金余额 = 累计卖出收入 - 累计买入支出
+        - 虚拟权益 = 现金余额 + 持仓市值
+        
+        这样即使卖出股票，权益曲线也能连续（不会归零）
         """
         stock_res = pd.DataFrame(index=res.index)
         
@@ -163,17 +163,21 @@ class Plotter:
         stock_res['total_cost'] = cost
         stock_res['avg_price'] = avg_price
         
-        # === 计算该股票独立的绩效指标 ===
-        
+        # === 使用虚拟账户数据 ===
         # 持仓市值 = 股数 * 当前价格
         stock_res['market_value'] = shares * stock_res['price']
         
+        # 虚拟现金余额（engine 计算）
+        stock_res['cash'] = res.get(f'{symbol}_cash', 0)
+        
+        # 虚拟权益 = 现金 + 持仓市值（engine 计算）
+        if f'{symbol}_equity' in res.columns:
+            stock_res['equity'] = res[f'{symbol}_equity']
+        else:
+            stock_res['equity'] = stock_res['cash'] + stock_res['market_value']
+        
         # 浮动盈亏 = 持仓市值 - 持仓成本
         stock_res['pnl'] = stock_res['market_value'] - cost
-        
-        # 该股票的"权益" = 空仓时的0 + 持仓市值
-        # 用于计算回撤
-        stock_res['equity'] = stock_res['market_value']
         
         # 该股票独立的交易信号
         buy_col = f"{symbol}_buy_signal"
@@ -341,26 +345,27 @@ class Plotter:
     
     @staticmethod
     def _plot_floating_pnl(ax, res: pd.DataFrame):
-        """绘制浮动盈亏"""
-        pnl = res['pnl']
+        """绘制虚拟账户盈亏曲线"""
+        # 使用虚拟账户权益作为盈亏
+        equity = res['equity']
         
         # 盈亏金额 - 正负阴影
-        ax.fill_between(res.index, pnl, 0, where=(pnl >= 0), 
-                       color='#e74c3c', alpha=0.4, label='浮盈')
-        ax.fill_between(res.index, pnl, 0, where=(pnl < 0), 
-                       color='#3498db', alpha=0.4, label='浮亏')
-        ax.plot(res.index, pnl, color='#7f8c8d', linewidth=1.5)
+        ax.fill_between(res.index, equity, 0, where=(equity >= 0), 
+                       color='#e74c3c', alpha=0.4, label='盈利')
+        ax.fill_between(res.index, equity, 0, where=(equity < 0), 
+                       color='#3498db', alpha=0.4, label='亏损')
+        ax.plot(res.index, equity, color='#7f8c8d', linewidth=1.5)
         ax.axhline(0, color='black', linestyle='-', linewidth=0.5)
         
-        ax.set_ylabel("浮动盈亏 (元)")
+        ax.set_ylabel("账户盈亏 (元)")
         ax.legend(loc='upper left', fontsize=8)
         ax.grid(True, linestyle=':', alpha=0.5)
-        ax.set_title("持仓浮动盈亏 (红=盈利, 蓝=亏损)", fontsize=10)
+        ax.set_title("虚拟账户累计盈亏 (红=盈利, 蓝=亏损)", fontsize=10)
         
         # 标注最终盈亏
-        final_pnl = pnl.iloc[-1] if len(pnl) > 0 else 0
-        color = '#e74c3c' if final_pnl >= 0 else '#3498db'
-        ax.text(0.02, 0.95, f"当前浮盈: {final_pnl:+,.0f}元", 
+        final_equity = equity.iloc[-1] if len(equity) > 0 else 0
+        color = '#e74c3c' if final_equity >= 0 else '#3498db'
+        ax.text(0.02, 0.95, f"累计盈亏: {final_equity:+,.0f}元", 
                 transform=ax.transAxes, fontsize=10, fontweight='bold',
                 verticalalignment='top', bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
     
@@ -399,20 +404,29 @@ class Plotter:
     
     @staticmethod
     def _plot_drawdown(ax, res: pd.DataFrame):
-        """绘制回撤曲线"""
-        # 使用 equity 字段计算回撤
+        """绘制回撤曲线（基于虚拟账户权益）"""
         equity = res['equity']
         
-        # 如果全是0，显示空图
-        if equity.sum() == 0:
-            ax.text(0.5, 0.5, '无持仓数据', transform=ax.transAxes, ha='center', va='center')
-            ax.set_title("回撤曲线", fontsize=10)
+        # 找到第一个有交易的日期（权益非零）
+        first_trade_idx = equity.ne(0).idxmax() if equity.ne(0).any() else None
+        
+        if first_trade_idx is None or equity.sum() == 0:
+            ax.text(0.5, 0.5, '无交易记录', transform=ax.transAxes, ha='center', va='center')
+            ax.set_title("虚拟账户回撤曲线", fontsize=10)
             return
         
+        # 从第一次交易开始计算
+        equity_active = equity.copy()
+        
         # 计算从峰值的回撤
-        max_equity = equity.cummax()
+        max_equity = equity_active.cummax()
+        # 避免除以0：只在max_equity > 0时计算
         max_equity_safe = max_equity.replace(0, np.nan)
-        drawdowns = ((equity - max_equity) / max_equity_safe).fillna(0)
+        drawdowns = ((equity_active - max_equity) / max_equity_safe.abs()).fillna(0)
+        
+        # 将交易前的回撤设为0
+        if first_trade_idx is not None:
+            drawdowns.loc[:first_trade_idx] = 0
         
         ax.fill_between(res.index, drawdowns, 0, color='#e74c3c', alpha=0.3)
         ax.plot(res.index, drawdowns, color='#e74c3c', linewidth=1.5)
@@ -428,40 +442,57 @@ class Plotter:
         
         ax.set_ylabel("回撤")
         ax.grid(True, linestyle=':', alpha=0.5)
-        ax.set_title("持仓市值回撤曲线", fontsize=10)
+        ax.set_title("虚拟账户回撤曲线", fontsize=10)
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y*100:.1f}%'))
     
     @staticmethod
     def _plot_rolling_returns(ax, res: pd.DataFrame):
-        """绘制滚动收益 (月度)"""
+        """绘制滚动收益 (月度，基于虚拟账户)"""
         try:
             equity = res['equity']
             
-            # 如果全是0，显示空图
-            if equity.sum() == 0:
-                ax.text(0.5, 0.5, '无持仓数据', transform=ax.transAxes, ha='center', va='center')
+            # 找到第一个有交易的日期
+            first_trade_idx = equity.ne(0).idxmax() if equity.ne(0).any() else None
+            
+            if first_trade_idx is None:
+                ax.text(0.5, 0.5, '无交易记录', transform=ax.transAxes, ha='center', va='center')
                 ax.set_title("月度收益率", fontsize=10)
                 return
             
-            # 计算月度收益
-            monthly = equity.resample('M').last()
-            monthly_returns = monthly.pct_change().dropna()
+            # 从第一次交易开始截取数据
+            equity_active = equity.loc[first_trade_idx:]
             
-            if len(monthly_returns) == 0:
+            if len(equity_active) < 30:  # 少于30天
+                ax.text(0.5, 0.5, '回测时间较短，无法计算月度收益', 
+                       transform=ax.transAxes, ha='center', va='center', fontsize=12)
+                ax.set_title("月度收益率", fontsize=10)
+                return
+            
+            # 计算月度权益变化（不用pct_change，因为起始值可能是0或负数）
+            monthly = equity_active.resample('M').last()
+            
+            # 计算月度收益金额（本月末 - 上月末）
+            monthly_pnl = monthly.diff()
+            monthly_pnl = monthly_pnl.dropna()
+            
+            # 过滤掉无效值
+            monthly_pnl = monthly_pnl[np.isfinite(monthly_pnl)]
+            
+            if len(monthly_pnl) == 0:
                 ax.text(0.5, 0.5, '数据不足，无法计算月度收益', 
                        transform=ax.transAxes, ha='center', va='center', fontsize=12)
                 ax.set_title("月度收益率", fontsize=10)
                 return
             
-            # 绘制柱状图
-            colors = ['#e74c3c' if r >= 0 else '#3498db' for r in monthly_returns]
-            ax.bar(monthly_returns.index, monthly_returns * 100, color=colors, alpha=0.7, width=20)
+            # 绘制柱状图（显示月度盈亏金额）
+            colors = ['#e74c3c' if r >= 0 else '#3498db' for r in monthly_pnl]
+            ax.bar(monthly_pnl.index, monthly_pnl, color=colors, alpha=0.7, width=20)
             
             ax.axhline(0, color='black', linestyle='-', linewidth=0.5)
-            ax.set_ylabel("月度收益率 (%)")
+            ax.set_ylabel("月度盈亏 (元)")
             ax.set_xlabel("日期")
             ax.grid(True, linestyle=':', alpha=0.5)
-            ax.set_title("月度收益率分布 (红=盈利, 蓝=亏损)", fontsize=10)
+            ax.set_title("月度盈亏分布 (红=盈利, 蓝=亏损)", fontsize=10)
             
             # 设置 x 轴格式
             ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))

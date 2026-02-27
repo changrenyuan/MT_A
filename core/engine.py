@@ -33,6 +33,10 @@ class BacktestEngine:
         
         # 多股票模式：每只股票独立的信号
         self._daily_signals = {}  # {symbol: {'buy': price, 'sell': price}}
+        
+        # 多股票模式：每只股票的虚拟账户（追踪现金余额）
+        # 用于计算单只股票的独立权益曲线
+        self._stock_cash = {}  # {symbol: cash_balance}
     
     def run(self):
         """运行回测"""
@@ -81,6 +85,10 @@ class BacktestEngine:
         if hasattr(self.strategy, 'prepare'):
             self.data = self.strategy.prepare(self.data)
         
+        # 初始化每只股票的虚拟账户
+        for symbol in self.data.keys():
+            self._stock_cash[symbol] = 0.0
+        
         # 获取所有股票的交易日期并集
         all_dates = set()
         for symbol, df in self.data.items():
@@ -115,8 +123,24 @@ class BacktestEngine:
                 if signal:
                     action, shares = self._parse_signal(signal, symbol)
                     if action and shares > 0:
+                        # 记录交易前的持仓（用于计算虚拟账户现金流）
+                        pos_before = self.account.get_position(symbol)
+                        shares_before = pos_before.shares if pos_before else 0
+                        
+                        # 执行交易
                         self.account.update(symbol, action, shares, price, self.commission)
                         self.strategy.record_action(action, price, date, symbol)
+                        
+                        # 更新该股票的虚拟账户现金流
+                        if action == "BUY":
+                            # 买入：现金流出 = 股数 * 价格 * (1 + 手续费)
+                            cost = shares * price * (1 + self.commission)
+                            self._stock_cash[symbol] -= cost
+                        elif action == "SELL":
+                            # 卖出：现金流入 = 股数 * 价格 * (1 - 手续费)
+                            revenue = shares * price * (1 - self.commission)
+                            self._stock_cash[symbol] += revenue
+                        
                         # 记录该股票的信号
                         if action == "BUY":
                             self._daily_signals[symbol]['buy'] = price
@@ -230,5 +254,14 @@ class BacktestEngine:
             signals = self._daily_signals.get(sym, {})
             snapshot[f"{sym}_buy_signal"] = signals.get('buy')
             snapshot[f"{sym}_sell_signal"] = signals.get('sell')
+            
+            # === 新增：该股票的虚拟账户数据 ===
+            # 虚拟现金余额（累计卖出收入 - 累计买入支出）
+            stock_cash = self._stock_cash.get(sym, 0)
+            snapshot[f"{sym}_cash"] = stock_cash
+            
+            # 虚拟权益 = 现金余额 + 持仓市值
+            stock_market_value = (pos.shares * sym_price) if pos and sym_price > 0 else 0
+            snapshot[f"{sym}_equity"] = stock_cash + stock_market_value
         
         self.history.append(snapshot)
