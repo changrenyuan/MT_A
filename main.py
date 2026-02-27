@@ -36,9 +36,10 @@ def build_strategy_config(strategy_name, account_cfg, full_cfg):
         }
     elif strategy_name == 'institutional_trend':
         return {
-            'stop_loss_pct': strategy_specific.get('stop_loss_pct', default_cfg.get('stop_loss_pct', 0.08)),
-            'trailing_stop_pct': strategy_specific.get('trailing_stop_pct', default_cfg.get('trailing_stop_pct', 0.15)),
-            'position_size': strategy_specific.get('position_size', default_cfg.get('position_size', 0.2)),
+            'stop_loss_pct': strategy_specific.get('stop_loss_pct', default_cfg.get('stop_loss_pct', 0.10)),
+            'trailing_stop_pct': strategy_specific.get('trailing_stop_pct', default_cfg.get('trailing_stop_pct', 0.25)),
+            'unit_size': strategy_specific.get('unit_size', default_cfg.get('unit_size', 0.1)),
+            'max_units': strategy_specific.get('max_units', default_cfg.get('max_units', 2)),
             'total_capital': account_cfg['initial_capital'],
         }
     else:
