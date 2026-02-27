@@ -31,7 +31,11 @@ class InstitutionalTrendStrategy(BaseStrategy):
         self.peak_price = 0.0     # 入场后的最高价
         self.indicators_df = None
         self.current_idx = 0
+        
+        # 用于记录交易信息 (在重置状态前保存)
         self._exit_reason = ""    # 退出原因
+        self._exit_avg_price = 0.0  # 退出时的成本价 (用于计算收益)
+        self._exit_peak_price = 0.0 # 退出时的峰值价
 
     def prepare(self, data):
         """
@@ -170,7 +174,10 @@ class InstitutionalTrendStrategy(BaseStrategy):
             if should_exit:
                 action = "SELL"
                 shares = account.total_shares
+                # 先保存交易信息，再重置状态
                 self._exit_reason = exit_reason
+                self._exit_avg_price = self.avg_price
+                self._exit_peak_price = self.peak_price
                 self._update_status("EXIT", price)
         
         self.current_idx += 1
@@ -211,8 +218,10 @@ class InstitutionalTrendStrategy(BaseStrategy):
         
         elif action_type == "SELL":
             reason = self._exit_reason if self._exit_reason else '未知'
-            if self.avg_price > 0:
-                pnl_pct = (price / self.avg_price - 1) * 100
+            # 使用保存的成本价计算收益
+            avg_price = self._exit_avg_price if self._exit_avg_price > 0 else self.avg_price
+            if avg_price > 0:
+                pnl_pct = (price / avg_price - 1) * 100
             else:
                 pnl_pct = 0.0
             print(f"  <<< [卖出离场] {str_date} | 价格: {price:.2f} | 原因: {reason} | 收益: {pnl_pct:+.2f}%")
