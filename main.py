@@ -258,13 +258,24 @@ def main():
     # 2. 多股票模式
     if enable_multi:
         stock_config = multi_stock_cfg.get('stocks', [])
+        
         if not stock_config:
-            print("[警告] 多股票模式已启用但未配置股票列表，使用默认股票")
-            stock_list = [
-                ('600036', '招商银行'),
-                ('000001', '平安银行'),
-                ('601318', '中国平安')
-            ]
+            # 未配置股票列表，从市场快照中自动选择成交额前3
+            print("未配置股票列表，正在获取市场快照自动选股...")
+            try:
+                full_market = provider.get_market_snapshot()
+                top_3 = full_market.nlargest(3, '成交额')[['代码', '名称']].head(3)
+                stock_list = [(row['代码'], row['名称']) for _, row in top_3.iterrows()]
+                print(f"自动选择成交额前3名:")
+                for code, name in stock_list:
+                    print(f"  - {code}: {name}")
+            except Exception as e:
+                print(f"[警告] 市场快照获取失败: {e}，使用默认股票")
+                stock_list = [
+                    ('600036', '招商银行'),
+                    ('000001', '平安银行'),
+                    ('601318', '中国平安')
+                ]
         else:
             # 解析配置格式
             stock_list = []
