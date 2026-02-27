@@ -1,17 +1,39 @@
+# 当前使用的策略名称
+# 可选: martingale (马丁格尔), institutional_trend (机构趋势)
+strategy_name: "martingale"
+
 # 基础账户配置
 account:
-  initial_capital: 1000000.0
+  initial_capital: 100000.0
   commission_rate: 0.0003  # 手续费万三
 
-# 马丁格尔策略核心参数
-strategy:
-  first_amount: 100000.0    # 第一笔买入金额
+# 马丁格尔策略参数
+martingale:
+  first_amount: 10000.0    # 第一笔买入金额
   base_drop: 0.03          # 基础跌幅 (3%)
   step_factor: 1.1         # 跌幅步进 (每层跌幅增加倍数)
   growth_factor: 1.5       # 资金倍增 (每层投入增加倍数)
-  max_steps: 5             # 最大补仓层数 (超过则停止补仓，持仓不动或止损)
+  max_steps: 5             # 最大补仓层数
   take_profit_pct: 0.08    # 止盈目标 (8%)
   stop_loss_pct: 0.15      # 全仓止损 (15%)
+
+# 机构趋势跟踪策略参数
+institutional_trend:
+  stop_loss_pct: 0.08      # 硬止损 (8%)
+  trailing_stop_pct: 0.15  # 移动止盈 (15%)
+  position_size: 0.2       # 单股仓位比例 (20%)
+
+# 策略默认参数 (向后兼容)
+strategy:
+  first_amount: 10000.0
+  base_drop: 0.03
+  step_factor: 1.1
+  growth_factor: 1.5
+  max_steps: 5
+  take_profit_pct: 0.08
+  stop_loss_pct: 0.15
+  trailing_stop_pct: 0.15
+  position_size: 0.2
 
 # 启动与退出机制
 mechanism:

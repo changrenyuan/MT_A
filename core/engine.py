@@ -12,6 +12,10 @@ class BacktestEngine:
         self.history = []
 
     def run(self):
+        # 如果策略有 prepare 方法，先预处理数据
+        if hasattr(self.strategy, 'prepare'):
+            self.data = self.strategy.prepare(self.data)
+        
         used_capital = 0  # 追踪累计投入
         for date, bar in self.data.iterrows():
             action, shares = self.strategy.on_bar(bar, self.account)

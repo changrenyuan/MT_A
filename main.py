@@ -2,40 +2,69 @@ import random
 import pandas as pd
 from data_provider.akshare_pd import AkShareProvider
 from strategies.martingale import MartingaleStrategy
+from strategies.institutional_trend import InstitutionalTrendStrategy
 from core.engine import BacktestEngine
 from utils.plotter import Plotter
 import yaml
 
 
-def run_selection_and_backtest(provider, full_market, sort_by_col, label_name, account_cfg, strategy_cfg):
-    print(f"\n{'=' * 20} 基于【{label_name}】筛选 Top 20 {'=' * 20}")
+# 策略映射表 - 支持动态选择策略
+STRATEGY_MAP = {
+    'martingale': MartingaleStrategy,
+    'institutional_trend': InstitutionalTrendStrategy,
+}
 
-    # 筛选并打印
-    top_20 = full_market.nlargest(20, sort_by_col)[['代码', '名称', '最新价', sort_by_col]]
-    print(top_20.to_string(index=False))
 
-    # 随机选择一个
-    target_stock = random.choice(top_20['代码'].tolist())
-    target_name = top_20[top_20['代码'] == target_stock]['名称'].values[0]
-    print(f"\n随机选中股票: {target_stock} ({target_name}) 进行回测...")
+def build_strategy_config(strategy_name, account_cfg, full_cfg):
+    """根据策略名称构建配置参数"""
+    # 获取策略专属配置
+    strategy_specific = full_cfg.get(strategy_name, {})
+    # 获取默认策略配置 (向后兼容)
+    default_cfg = full_cfg.get('strategy', {})
+    
+    if strategy_name == 'martingale':
+        return {
+            'first_amount': strategy_specific.get('first_amount', default_cfg.get('first_amount', 10000.0)),
+            'base_drop': strategy_specific.get('base_drop', default_cfg.get('base_drop', 0.03)),
+            'step_factor': strategy_specific.get('step_factor', default_cfg.get('step_factor', 1.1)),
+            'growth_factor': strategy_specific.get('growth_factor', default_cfg.get('growth_factor', 1.5)),
+            'max_steps': strategy_specific.get('max_steps', default_cfg.get('max_steps', 5)),
+            'total_capital': account_cfg['initial_capital'],
+            'take_profit_pct': strategy_specific.get('take_profit_pct', default_cfg.get('take_profit_pct', 0.08)),
+            'stop_loss_pct': strategy_specific.get('stop_loss_pct', default_cfg.get('stop_loss_pct', 0.15))
+        }
+    elif strategy_name == 'institutional_trend':
+        return {
+            'stop_loss_pct': strategy_specific.get('stop_loss_pct', default_cfg.get('stop_loss_pct', 0.08)),
+            'trailing_stop_pct': strategy_specific.get('trailing_stop_pct', default_cfg.get('trailing_stop_pct', 0.15)),
+            'position_size': strategy_specific.get('position_size', default_cfg.get('position_size', 0.2)),
+            'total_capital': account_cfg['initial_capital'],
+        }
+    else:
+        raise ValueError(f"未知策略: {strategy_name}")
 
-    # 从配置文件读取策略参数
-    config = {
-        'first_amount': strategy_cfg['first_amount'],
-        'base_drop': strategy_cfg['base_drop'],
-        'step_factor': strategy_cfg['step_factor'],
-        'growth_factor': strategy_cfg['growth_factor'],
-        'max_steps': strategy_cfg['max_steps'],
-        'total_capital': account_cfg['initial_capital'],
-        'take_profit_pct': strategy_cfg['take_profit_pct'],
-        'stop_loss_pct': strategy_cfg['stop_loss_pct']
-    }
 
+def run_backtest(provider, target_stock, target_name, account_cfg, full_cfg, strategy_name='martingale'):
+    """执行单个股票的回测"""
+    print(f"\n{'=' * 20} 回测: {target_stock} ({target_name}) {'=' * 20}")
+    print(f"策略: {strategy_name}")
+    
+    # 构建策略配置
+    config = build_strategy_config(strategy_name, account_cfg, full_cfg)
+    
     # 获取回测数据
     data = provider.get_data(target_stock)
+    
+    if data.empty:
+        print(f"[警告] 股票 {target_stock} 数据为空，跳过回测")
+        return None
 
-    # 初始化策略（此处可插拔更换策略类）
-    strategy = MartingaleStrategy(config)
+    # 初始化策略
+    strategy_class = STRATEGY_MAP.get(strategy_name)
+    if not strategy_class:
+        raise ValueError(f"策略 {strategy_name} 未注册")
+    
+    strategy = strategy_class(config)
 
     # 运行引擎
     engine = BacktestEngine(
@@ -47,7 +76,25 @@ def run_selection_and_backtest(provider, full_market, sort_by_col, label_name, a
     results = engine.run()
 
     # 绘图
-    Plotter.plot_results(results, f"{target_stock} {target_name}", f"按{label_name}筛选")
+    Plotter.plot_results(results, f"{target_stock} {target_name}", f"策略: {strategy_name}")
+    
+    return results
+
+
+def run_selection_and_backtest(provider, full_market, sort_by_col, label_name, account_cfg, full_cfg, strategy_name='martingale'):
+    """筛选股票并执行回测"""
+    print(f"\n{'=' * 20} 基于【{label_name}】筛选 Top 20 {'=' * 20}")
+
+    # 筛选并打印
+    top_20 = full_market.nlargest(20, sort_by_col)[['代码', '名称', '最新价', sort_by_col]]
+    print(top_20.to_string(index=False))
+
+    # 随机选择一个
+    target_stock = random.choice(top_20['代码'].tolist())
+    target_name = top_20[top_20['代码'] == target_stock]['名称'].values[0]
+    
+    # 执行回测
+    return run_backtest(provider, target_stock, target_name, account_cfg, full_cfg, strategy_name)
 
 
 def main():
@@ -56,12 +103,14 @@ def main():
         full_cfg = yaml.safe_load(f)
     
     account_cfg = full_cfg['account']
-    strategy_cfg = full_cfg['strategy']
+    
+    # 从配置读取策略名称，默认使用 martingale
+    strategy_name = full_cfg.get('strategy_name', 'martingale')
     
     provider = AkShareProvider(cache_dir="data")
     full_market = None
 
-    # 1. 尝试获取快照
+    # 2. 尝试获取快照
     try:
         print("正在尝试获取全市场实时快照...")
         full_market = provider.get_market_snapshot()
@@ -70,26 +119,30 @@ def main():
         print("触发降级机制：手动指定【招商银行】进行策略回测。")
 
         # 构建一个伪造的 DataFrame，确保后续 run_selection_and_backtest 不报错
-        # 这里的列名必须与 akshare 返回的一致（代码、名称、成交额、换手率等）
         fallback_data = {
             '代码': ['600036'],  # 招商银行
             '名称': ['招商银行'],
-            '最新价': [0.0],  # 回测时会拉取历史K线，这里只是占位
-            '成交额': [99999999999],  # 给个极高值确保它在 Top 20 里
+            '最新价': [0.0],
+            '成交额': [99999999999],
             '换手率': [99.9]
         }
         full_market = pd.DataFrame(fallback_data)
 
-    # 2. 执行基于成交额的筛选与回测
-    # 如果是降级模式，top 20 就只有招商银行一只，random.choice 也会选中它
+    # 3. 执行基于成交额的筛选与回测
     try:
-        run_selection_and_backtest(provider, full_market, '成交额', '成交额', account_cfg, strategy_cfg)
+        run_selection_and_backtest(
+            provider, full_market, '成交额', '成交额', 
+            account_cfg, full_cfg, strategy_name
+        )
     except Exception as e:
         print(f"成交额回测环节执行失败: {e}")
 
-    # 3. 执行基于换手率的筛选与回测
+    # 4. 执行基于换手率的筛选与回测
     try:
-        run_selection_and_backtest(provider, full_market, '换手率', '换手率', account_cfg, strategy_cfg)
+        run_selection_and_backtest(
+            provider, full_market, '换手率', '换手率', 
+            account_cfg, full_cfg, strategy_name
+        )
     except Exception as e:
         print(f"换手率回测环节执行失败: {e}")
 
