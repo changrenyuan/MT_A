@@ -23,10 +23,11 @@ class InstitutionalTrendStrategy(BaseStrategy):
         
         # 内部状态
         self.in_position = False
-        self.entry_price = 0
-        self.peak_price = 0
+        self.entry_price = 0.0
+        self.peak_price = 0.0
         self.indicators_df = None
         self.current_idx = 0
+        self._exit_reason = ""
         
     def prepare(self, data):
         """
@@ -58,6 +59,7 @@ class InstitutionalTrendStrategy(BaseStrategy):
         )
         
         # 趋势买入信号 (6大金律)
+        # 注意：使用 fillna(False) 处理 NaN
         buy_cond = (
             (df['MA5'] > df['MA10']) & 
             (df['MA10'] > df['MA20']) & 
@@ -67,8 +69,11 @@ class InstitutionalTrendStrategy(BaseStrategy):
             (df['ROC_20'] < 0.3) & 
             (df['MA20'] > df['MA60'])
         )
-        # 信号去重，确保只取第一天
-        df['Signal_Entry'] = buy_cond & (~buy_cond.shift(1).fillna(False))
+        # 信号去重，确保只取第一天，同时处理 NaN
+        df['Signal_Entry'] = buy_cond.fillna(False) & (~buy_cond.shift(1).fillna(False))
+        
+        # 将所有 NaN 替换为 False，避免后续计算问题
+        df['MACD_Dead_Cross'] = df['MACD_Dead_Cross'].fillna(False)
         
         self.indicators_df = df
         self.current_idx = 0
@@ -93,8 +98,13 @@ class InstitutionalTrendStrategy(BaseStrategy):
         price = bar['close']
         high = bar['high']
         
+        # 安全获取 MA20，处理 NaN
+        ma20 = row['MA20']
+        if pd.isna(ma20):
+            ma20 = price  # 如果没有 MA20，使用当前价格
+        
         # 更新峰值价格 (持仓状态下)
-        if self.in_position:
+        if self.in_position and price > 0:
             self.peak_price = max(self.peak_price, high)
         
         action = None
@@ -103,25 +113,29 @@ class InstitutionalTrendStrategy(BaseStrategy):
         # --- 买入逻辑 ---
         if not self.in_position and row['Signal_Entry']:
             # 买入信号触发
-            action = "BUY"
-            shares = self._calc_shares(price)
-            self.in_position = True
-            self.entry_price = price
-            self.peak_price = price
+            if price > 0:
+                action = "BUY"
+                shares = self._calc_shares(price)
+                if shares > 0:
+                    self.in_position = True
+                    self.entry_price = price
+                    self.peak_price = price
+                else:
+                    action = None  # 无法买入足够股数
             
         # --- 卖出逻辑 ---
-        elif self.in_position:
+        elif self.in_position and account.total_shares > 0:
             # 1. 趋势破坏 (有效跌破MA20，2%缓冲区)
-            exit_trend = price < (row['MA20'] * 0.98)
+            exit_trend = price < (ma20 * 0.98)
             
             # 2. MACD死叉
             exit_macd = row['MACD_Dead_Cross']
             
             # 3. 硬止损
-            exit_stop_loss = price < self.entry_price * (1 - self.stop_loss_pct)
+            exit_stop_loss = self.entry_price > 0 and price < self.entry_price * (1 - self.stop_loss_pct)
             
             # 4. 移动止盈
-            exit_trailing = price < self.peak_price * (1 - self.trailing_stop_pct)
+            exit_trailing = self.peak_price > 0 and price < self.peak_price * (1 - self.trailing_stop_pct)
             
             if exit_trend or exit_macd or exit_stop_loss or exit_trailing:
                 action = "SELL"
@@ -135,12 +149,16 @@ class InstitutionalTrendStrategy(BaseStrategy):
                     self._exit_reason = "有效破位"
                 else:
                     self._exit_reason = "MACD死叉"
+                # 重置持仓状态
+                self.in_position = False
         
         self.current_idx += 1
         return action, shares
     
     def _calc_shares(self, price):
         """计算买入股数 (按仓位比例)"""
+        if price <= 0:
+            return 0
         invest = self.initial_capital * self.position_size
         return math.floor(invest / price / 100) * 100
     
@@ -151,10 +169,13 @@ class InstitutionalTrendStrategy(BaseStrategy):
         if action_type == "BUY":
             print(f"  >>> [买入] {str_date} | 价格: {price:.2f}")
         elif action_type == "SELL":
-            reason = getattr(self, '_exit_reason', '未知')
-            pnl_pct = (price / self.entry_price - 1) * 100 if self.entry_price > 0 else 0
+            reason = self._exit_reason if self._exit_reason else '未知'
+            if self.entry_price > 0:
+                pnl_pct = (price / self.entry_price - 1) * 100
+            else:
+                pnl_pct = 0.0
             print(f"  <<< [卖出] {str_date} | 价格: {price:.2f} | 原因: {reason} | 收益: {pnl_pct:.2f}%")
             # 重置状态
-            self.in_position = False
-            self.entry_price = 0
-            self.peak_price = 0
+            self.entry_price = 0.0
+            self.peak_price = 0.0
+            self._exit_reason = ""

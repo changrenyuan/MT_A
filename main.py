@@ -1,4 +1,5 @@
 import random
+import traceback
 import pandas as pd
 from data_provider.akshare_pd import AkShareProvider
 from strategies.martingale import MartingaleStrategy
@@ -49,36 +50,44 @@ def run_backtest(provider, target_stock, target_name, account_cfg, full_cfg, str
     print(f"\n{'=' * 20} 回测: {target_stock} ({target_name}) {'=' * 20}")
     print(f"策略: {strategy_name}")
     
-    # 构建策略配置
-    config = build_strategy_config(strategy_name, account_cfg, full_cfg)
-    
-    # 获取回测数据
-    data = provider.get_data(target_stock)
-    
-    if data.empty:
-        print(f"[警告] 股票 {target_stock} 数据为空，跳过回测")
+    try:
+        # 构建策略配置
+        config = build_strategy_config(strategy_name, account_cfg, full_cfg)
+        
+        # 获取回测数据
+        data = provider.get_data(target_stock)
+        
+        if data.empty:
+            print(f"[警告] 股票 {target_stock} 数据为空，跳过回测")
+            return None
+
+        print(f"数据范围: {data.index[0]} ~ {data.index[-1]}, 共 {len(data)} 个交易日")
+
+        # 初始化策略
+        strategy_class = STRATEGY_MAP.get(strategy_name)
+        if not strategy_class:
+            raise ValueError(f"策略 {strategy_name} 未注册")
+        
+        strategy = strategy_class(config)
+
+        # 运行引擎
+        engine = BacktestEngine(
+            data, 
+            strategy, 
+            initial_capital=account_cfg['initial_capital'],
+            commission=account_cfg['commission_rate']
+        )
+        results = engine.run()
+
+        # 绘图
+        Plotter.plot_results(results, f"{target_stock} {target_name}", f"策略: {strategy_name}")
+        
+        return results
+        
+    except Exception as e:
+        print(f"[回测错误] {e}")
+        traceback.print_exc()
         return None
-
-    # 初始化策略
-    strategy_class = STRATEGY_MAP.get(strategy_name)
-    if not strategy_class:
-        raise ValueError(f"策略 {strategy_name} 未注册")
-    
-    strategy = strategy_class(config)
-
-    # 运行引擎
-    engine = BacktestEngine(
-        data, 
-        strategy, 
-        initial_capital=account_cfg['initial_capital'],
-        commission=account_cfg['commission_rate']
-    )
-    results = engine.run()
-
-    # 绘图
-    Plotter.plot_results(results, f"{target_stock} {target_name}", f"策略: {strategy_name}")
-    
-    return results
 
 
 def run_selection_and_backtest(provider, full_market, sort_by_col, label_name, account_cfg, full_cfg, strategy_name='martingale'):
@@ -136,6 +145,7 @@ def main():
         )
     except Exception as e:
         print(f"成交额回测环节执行失败: {e}")
+        traceback.print_exc()
 
     # 4. 执行基于换手率的筛选与回测
     try:
@@ -145,6 +155,7 @@ def main():
         )
     except Exception as e:
         print(f"换手率回测环节执行失败: {e}")
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
