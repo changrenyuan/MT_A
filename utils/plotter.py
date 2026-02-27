@@ -144,12 +144,20 @@ class Plotter:
         """
         stock_res = pd.DataFrame(index=res.index)
         
-        # 基础字段
-        stock_res['price'] = res['price']
+        # 该股票的独立价格
+        price_col = f"{symbol}_price"
+        if price_col in res.columns:
+            stock_res['price'] = res[price_col]
+        else:
+            stock_res['price'] = res['price']  # 回退到参考价格
+        
+        # 基础字段 (组合级别)
         stock_res['cash'] = res['cash']
         stock_res['equity'] = res['equity']
         stock_res['pnl'] = res['pnl']
         stock_res['market_value'] = res['market_value']
+        
+        # 该股票的持仓信息
         stock_res['total_shares'] = res.get(f'{symbol}_shares', 0)
         stock_res['total_cost'] = res.get(f'{symbol}_cost', 0)
         
@@ -160,11 +168,13 @@ class Plotter:
         else:
             stock_res['avg_price'] = 0
         
-        # 交易信号
-        if 'buy_signal' in res.columns:
-            stock_res['buy_signal'] = res['buy_signal']
-        if 'sell_signal' in res.columns:
-            stock_res['sell_signal'] = res['sell_signal']
+        # 该股票独立的交易信号
+        buy_col = f"{symbol}_buy_signal"
+        sell_col = f"{symbol}_sell_signal"
+        if buy_col in res.columns:
+            stock_res['buy_signal'] = res[buy_col]
+        if sell_col in res.columns:
+            stock_res['sell_signal'] = res[sell_col]
         
         return stock_res
     
