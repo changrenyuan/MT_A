@@ -96,7 +96,7 @@ def run_selection_and_backtest(provider, full_market, sort_by_col, label_name, a
     print(f"\n{'=' * 20} 基于【{label_name}】筛选 Top 20 {'=' * 20}")
 
     # 筛选并打印
-    top_20 = full_market.nlargest(20, sort_by_col)[['代码', '名称', '最新价', sort_by_col]]
+    top_20 = full_market.nlargest(1, sort_by_col)[['代码', '名称', '最新价', sort_by_col]]
     print(top_20.to_string(index=False))
 
     # 随机选择一个

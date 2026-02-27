@@ -4,12 +4,12 @@ strategy_name: "institutional_trend"
 
 # 基础账户配置
 account:
-  initial_capital: 100000.0
+  initial_capital: 1000000.0
   commission_rate: 0.0003  # 手续费万三
 
 # 马丁格尔策略参数
 martingale:
-  first_amount: 10000.0    # 第一笔买入金额
+  first_amount: 100000.0    # 第一笔买入金额
   base_drop: 0.03          # 基础跌幅 (3%)
   step_factor: 1.1         # 跌幅步进 (每层跌幅增加倍数)
   growth_factor: 1.5       # 资金倍增 (每层投入增加倍数)
@@ -22,11 +22,11 @@ institutional_trend:
   stop_loss_pct: 0.10      # 硬止损 (10%)
   trailing_stop_pct: 0.25  # 移动止盈 (25%)
   unit_size: 0.1           # 单次建仓比例 (10%)
-  max_units: 2             # 最大加仓次数 (总仓位 20%)
+  max_units: 5             # 最大加仓次数 (总仓位 20%)
 
 # 策略默认参数 (向后兼容)
 strategy:
-  first_amount: 10000.0
+  first_amount: 100000.0
   base_drop: 0.03
   step_factor: 1.1
   growth_factor: 1.5
