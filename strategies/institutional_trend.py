@@ -82,8 +82,8 @@ class InstitutionalTrendStrategy(BaseStrategy):
         # 趋势破坏：价格跌破 MA20 的 2% 缓冲区
         df['Trend_Broken'] = df['close'] < df['MA20'] * 0.98
         
-        # 填充 NaN 值
-        df = df.fillna(method='ffill').fillna(method='bfill')
+        # 填充 NaN 值 (pandas 2.0+ 语法)
+        df = df.ffill().bfill()
         
         # 将布尔列中的 NaN 替换为 False
         bool_cols = ['Strong_Trend', 'MA10_Cross_Up', 'MACD_Bullish', 'Initial_Entry', 
