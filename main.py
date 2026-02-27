@@ -6,6 +6,7 @@ from strategies.martingale import MartingaleStrategy
 from strategies.institutional_trend import InstitutionalTrendStrategy
 from core.engine import BacktestEngine
 from utils.plotter import Plotter
+from utils.metrics import MetricsCalculator
 import yaml
 
 
@@ -79,6 +80,15 @@ def run_backtest(provider, target_stock, target_name, account_cfg, full_cfg, str
             commission=account_cfg['commission_rate']
         )
         results = engine.run()
+
+        # === 计算并显示绩效指标 ===
+        metrics = MetricsCalculator.calculate(results, account_cfg['initial_capital'])
+        print(f"\n{'=' * 50}")
+        print(f"📊 回测绩效报告")
+        print(f"{'=' * 50}")
+        for key, value in metrics.items():
+            print(f"  {key}: {value}")
+        print(f"{'=' * 50}")
 
         # 绘图
         Plotter.plot_results(results, f"{target_stock} {target_name}", f"策略: {strategy_name}")
