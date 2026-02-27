@@ -1,11 +1,11 @@
 # 基础账户配置
 account:
-  initial_capital: 100000.0
+  initial_capital: 1000000.0
   commission_rate: 0.0003  # 手续费万三
 
 # 马丁格尔策略核心参数
 strategy:
-  first_amount: 10000.0    # 第一笔买入金额
+  first_amount: 100000.0    # 第一笔买入金额
   base_drop: 0.03          # 基础跌幅 (3%)
   step_factor: 1.1         # 跌幅步进 (每层跌幅增加倍数)
   growth_factor: 1.5       # 资金倍增 (每层投入增加倍数)

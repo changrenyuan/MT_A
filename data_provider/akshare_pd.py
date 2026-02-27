@@ -1,7 +1,8 @@
 import akshare as ak
 import pandas as pd
 import os
-from datetime import datetime
+from datetime import datetime, time
+import glob
 from .base import BaseDataProvider
 
 
@@ -19,28 +20,53 @@ class AkShareProvider(BaseDataProvider):
         # os.environ['https_proxy'] = ''
 
     def get_market_snapshot(self) -> pd.DataFrame:
-        """获取全 A 股当日实时快照，并实现本地一日一存"""
-        today_str = datetime.now().strftime('%Y%m%d')
-        cache_file = os.path.join(self.cache_dir, f"market_snapshot_{today_str}.csv")
+        """获取全 A 股当日实时快照
+        规则：
+        1. 11:30 之后：尝试加载/创建今日缓存。
+        2. 11:30 之前：不缓存今日数据，直接寻找最近的历史缓存。
+        """
+        now = datetime.now()
+        today_str = now.strftime('%Y%m%d')
+        threshold_time = time(11, 30)
 
-        # 1. 检查缓存
-        if os.path.exists(cache_file):
-            print(f"检测到本地缓存，加载今日 ({today_str}) 快照数据...")
-            df = pd.read_csv(cache_file, dtype={'代码': str})  # 保证代码列不丢失 0
-            return df
+        # 路径定义
+        cache_file_today = os.path.join(self.cache_dir, f"market_snapshot_{today_str}.csv")
 
-        # 2. 缓存不存在，拉取数据
-        print(f"未检测到本地缓存，正在从 AkShare 拉取最新市场快照...")
+        # --- 逻辑 A: 11:30 之前的情况 ---
+        if now.time() < threshold_time:
+            print(f"当前时间 ({now.strftime('%H:%M')}) 早于 11:30，正在检索最近的历史缓存...")
+
+            # 搜索所有快照缓存文件
+            cache_pattern = os.path.join(self.cache_dir, "market_snapshot_*.csv")
+            all_caches = glob.glob(cache_pattern)
+
+            # 过滤掉今天的缓存（如果有的话），并按文件名（日期）降序排列
+            history_caches = sorted([f for f in all_caches if today_str not in f], reverse=True)
+
+            if history_caches:
+                latest_history = history_caches[0]
+                print(f"检测到历史缓存，加载最近日期数据: {os.path.basename(latest_history)}")
+                return pd.read_csv(latest_history, dtype={'代码': str})
+            else:
+                # 如果连历史缓存都没有，则不得不拉取实时数据（但不保存）
+                print("警告：未找到任何历史缓存，正在拉取实时数据（不执行本地缓存）...")
+                return ak.stock_zh_a_spot()
+
+        # --- 逻辑 B: 11:30 之后的情况 (原逻辑) ---
+        if os.path.exists(cache_file_today):
+            print(f"检测到今日 ({today_str}) 缓存，正在加载...")
+            return pd.read_csv(cache_file_today, dtype={'代码': str})
+
+        print(f"11:30 后首次运行，正在从 AkShare 拉取并缓存今日最新快照...")
         try:
             df = ak.stock_zh_a_spot()
-            # 3. 立即存入本地
-            df.to_csv(cache_file, index=False, encoding='utf-8-sig')
-            print(f"数据拉取成功并已保存至: {cache_file}")
+            # 立即存入本地
+            df.to_csv(cache_file_today, index=False, encoding='utf-8-sig')
+            print(f"今日数据已成功缓存至: {cache_file_today}")
             return df
         except Exception as e:
             print(f"拉取失败: {e}")
-            # 如果拉取不到今天的，尝试加载最近一次的缓存（可选逻辑）
-            raise ConnectionError("无法连接到行情服务器且无本地缓存可用。")
+            raise ConnectionError("无法获取实时行情且无可用缓存。")
 
     def get_data_dc(self, symbol: str) -> pd.DataFrame:
         """获取指定股票的历史日线数据 (也可以做缓存，此处保持简洁)"""
