@@ -6,7 +6,7 @@
   <component name="ChangeListManager">
     <list default="true" id="5d8563f6-1025-4ea0-8425-3800cdf07c47" name="Changes" comment="update cache">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/market_snapshot_20260227.csv" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/config/settings.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/config/settings.yaml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/data_provider/akshare_pd.py" beforeDir="false" afterPath="$PROJECT_DIR$/data_provider/akshare_pd.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />

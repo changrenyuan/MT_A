@@ -4,20 +4,20 @@ strategy_name: "institutional_trend"
 
 # 基础账户配置
 account:
-  initial_capital: 100000.0
+  initial_capital: 100000.0 #10w
   commission_rate: 0.0003  # 手续费万三
   max_positions: 3         # 最大同时持仓数
 
 # 多股票组合配置
 multi_stock:
   enable: true             # 是否启用多股票模式
-  stocks:                  # 股票池列表 [(代码, 名称), ...]
-    - code: "600036"
-      name: "招商银行"
-    - code: "000001"
-      name: "平安银行"
-    - code: "601318"
-      name: "中国平安"
+#  stocks:                  # 股票池列表 [(代码, 名称), ...]
+#    - code: "600036"
+#      name: "招商银行"
+#    - code: "000001"
+#      name: "平安银行"
+#    - code: "601318"
+#      name: "中国平安"
 
 # 马丁格尔策略参数
 martingale:
