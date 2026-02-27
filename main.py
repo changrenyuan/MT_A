@@ -190,9 +190,11 @@ def run_multi_stock_backtest(provider, stock_list, account_cfg, full_cfg, strate
         )
         print(f"\n📄 HTML报告已生成: {report_path}")
         
-        # 生成图表 (每只股票一张 + 组合总览)
+        # 生成图表 (每只股票完整图 + 组合总览)
         print(f"\n📈 生成图表...")
-        Plotter.plot_multi_stock(results, symbols, "多股票组合回测", save_dir="reports/charts")
+        # 构建股票代码到名称的映射
+        symbol_names = {code: name for code, name in stock_list}
+        Plotter.plot_multi_stock(results, symbols, symbol_names, "多股票组合回测", save_dir="reports/charts")
         
         return results
         

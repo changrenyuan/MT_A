@@ -85,151 +85,92 @@ class Plotter:
             return None
     
     @staticmethod
-    def plot_multi_stock(res: pd.DataFrame, symbols: list, title: str = "多股票组合回测",
+    def plot_multi_stock(res: pd.DataFrame, symbols: list, symbol_names: dict = None,
+                         title: str = "多股票组合回测",
                          save_dir: str = "reports/charts", show: bool = False):
         """
-        为多股票组合绘制图表 (每只股票单独一张图)
+        为多股票组合绘制图表
         
         Args:
             res: 回测结果 DataFrame
             symbols: 股票代码列表
+            symbol_names: 股票代码到名称的映射 {code: name}
             title: 总标题
             save_dir: 保存目录
             show: 是否显示
         """
+        if symbol_names is None:
+            symbol_names = {}
+        
         saved_files = []
         
+        # 1. 为每只股票生成完整的6子图
         for symbol in symbols:
             # 检查是否有该股票的数据
             shares_col = f"{symbol}_shares"
             if shares_col not in res.columns:
                 continue
             
-            # 为每只股票创建单独的图
-            filepath = Plotter._plot_single_stock_summary(res, symbol, save_dir, show)
+            stock_name = symbol_names.get(symbol, "")
+            display_name = f"{symbol} {stock_name}".strip()
+            
+            # 创建该股票的专属数据视图
+            stock_res = Plotter._extract_stock_data(res, symbol)
+            
+            # 生成完整6子图
+            filepath = Plotter.plot_results(
+                stock_res, 
+                display_name, 
+                "策略回测详情",
+                save_dir=save_dir, 
+                show=show
+            )
             if filepath:
                 saved_files.append(filepath)
         
-        # 绘制组合总览图
-        overview_path = Plotter._plot_portfolio_overview(res, symbols, title, save_dir, show)
+        # 2. 绘制组合总览图
+        overview_path = Plotter._plot_portfolio_overview(res, symbols, symbol_names, title, save_dir, show)
         if overview_path:
             saved_files.append(overview_path)
         
         return saved_files
     
     @staticmethod
-    def _plot_single_stock_summary(res: pd.DataFrame, symbol: str, 
-                                   save_dir: str, show: bool = False):
-        """绘制单只股票的简要图表"""
-        try:
-            plt.rcParams['font.sans-serif'] = ['SimHei']
-            plt.rcParams['axes.unicode_minus'] = False
-            
-            fig, axes = plt.subplots(3, 1, figsize=(14, 12), sharex=True)
-            fig.suptitle(f"股票回测: {symbol}", fontsize=14, fontweight='bold')
-            
-            ax1, ax2, ax3 = axes
-            
-            # 子图1: 价格与信号
-            Plotter._plot_single_price(ax1, res, symbol)
-            
-            # 子图2: 持仓股数
-            Plotter._plot_single_position(ax2, res, symbol)
-            
-            # 子图3: 该股票盈亏贡献 (简化版)
-            Plotter._plot_single_contribution(ax3, res, symbol)
-            
-            plt.tight_layout(rect=[0, 0, 1, 0.98])
-            
-            # 保存
-            os.makedirs(save_dir, exist_ok=True)
-            safe_symbol = symbol.replace("/", "_").replace("\\", "_")
-            filepath = os.path.join(save_dir, f"{safe_symbol}_summary.png")
-            fig.savefig(filepath, dpi=150, bbox_inches='tight', facecolor='white')
-            print(f"  📈 图表已保存: {filepath}")
-            
-            if show:
-                plt.show()
-            else:
-                plt.close(fig)
-            
-            return filepath
-            
-        except Exception as e:
-            print(f"[绘图错误] {symbol}: {e}")
-            return None
-    
-    @staticmethod
-    def _plot_single_price(ax, res: pd.DataFrame, symbol: str):
-        """绘制单只股票价格"""
-        shares_col = f"{symbol}_shares"
+    def _extract_stock_data(res: pd.DataFrame, symbol: str) -> pd.DataFrame:
+        """
+        从多股票结果中提取单只股票的数据视图
+        
+        创建一个类似单股票回测的 DataFrame，用于绑定绘图函数
+        """
+        stock_res = pd.DataFrame(index=res.index)
+        
+        # 基础字段
+        stock_res['price'] = res['price']
+        stock_res['cash'] = res['cash']
+        stock_res['equity'] = res['equity']
+        stock_res['pnl'] = res['pnl']
+        stock_res['market_value'] = res['market_value']
+        stock_res['total_shares'] = res.get(f'{symbol}_shares', 0)
+        stock_res['total_cost'] = res.get(f'{symbol}_cost', 0)
+        
+        # 该股票的持仓均价
         avg_col = f"{symbol}_avg_price"
-        
-        # 尝试获取价格数据
-        price_col = 'price'
-        
-        ax.plot(res.index, res[price_col], label='参考价格', color='#bdc3c7', alpha=0.6, linewidth=1)
-        
-        # 持仓均价
         if avg_col in res.columns:
-            avg_price_safe = res[avg_col].replace(0, np.nan)
-            ax.plot(res.index, avg_price_safe, label='持仓均价', color='#f39c12', linestyle='--', linewidth=1.5)
+            stock_res['avg_price'] = res[avg_col]
+        else:
+            stock_res['avg_price'] = 0
         
-        # 买入/卖出信号
-        buys = res[res['buy_signal'].notnull()]
-        sells = res[res['sell_signal'].notnull()]
-        if len(buys) > 0:
-            ax.scatter(buys.index, buys['buy_signal'], color='#e74c3c', marker='^', s=60, label='买入', zorder=5)
-        if len(sells) > 0:
-            ax.scatter(sells.index, sells['sell_signal'], color='#2ecc71', marker='v', s=60, label='卖出', zorder=5)
+        # 交易信号
+        if 'buy_signal' in res.columns:
+            stock_res['buy_signal'] = res['buy_signal']
+        if 'sell_signal' in res.columns:
+            stock_res['sell_signal'] = res['sell_signal']
         
-        ax.set_ylabel("价格")
-        ax.legend(loc='upper left', fontsize=8)
-        ax.grid(True, linestyle=':', alpha=0.5)
-        ax.set_title(f"{symbol} 价格走势与信号", fontsize=10)
+        return stock_res
     
     @staticmethod
-    def _plot_single_position(ax, res: pd.DataFrame, symbol: str):
-        """绘制单只股票持仓"""
-        shares_col = f"{symbol}_shares"
-        cost_col = f"{symbol}_cost"
-        
-        if shares_col not in res.columns:
-            ax.text(0.5, 0.5, '无持仓数据', transform=ax.transAxes, ha='center', va='center')
-            return
-        
-        shares = res[shares_col]
-        
-        # 柱状图显示持仓股数
-        colors = ['#3498db' if s > 0 else '#ecf0f1' for s in shares]
-        ax.bar(res.index, shares, color=colors, alpha=0.6, width=1.5)
-        ax.set_ylabel("持仓股数")
-        ax.legend(loc='upper left', fontsize=8)
-        ax.grid(True, linestyle=':', alpha=0.5)
-        ax.set_title(f"{symbol} 持仓变化", fontsize=10)
-    
-    @staticmethod
-    def _plot_single_contribution(ax, res: pd.DataFrame, symbol: str):
-        """绘制单只股票对组合的贡献"""
-        shares_col = f"{symbol}_shares"
-        cost_col = f"{symbol}_cost"
-        
-        if shares_col not in res.columns or cost_col not in res.columns:
-            ax.text(0.5, 0.5, '无数据', transform=ax.transAxes, ha='center', va='center')
-            return
-        
-        # 简化：显示持仓成本
-        cost = res[cost_col]
-        ax.fill_between(res.index, cost, 0, color='#3498db', alpha=0.4, label='持仓成本')
-        ax.plot(res.index, cost, color='#2980b9', linewidth=1.5)
-        ax.set_ylabel("持仓成本 (元)")
-        ax.legend(loc='upper left', fontsize=8)
-        ax.grid(True, linestyle=':', alpha=0.5)
-        ax.set_title(f"{symbol} 持仓成本", fontsize=10)
-    
-    @staticmethod
-    def _plot_portfolio_overview(res: pd.DataFrame, symbols: list, title: str,
-                                 save_dir: str, show: bool = False):
+    def _plot_portfolio_overview(res: pd.DataFrame, symbols: list, symbol_names: dict,
+                                 title: str, save_dir: str, show: bool = False):
         """绘制组合总览图"""
         try:
             plt.rcParams['font.sans-serif'] = ['SimHei']
@@ -244,7 +185,7 @@ class Plotter:
             Plotter._plot_equity(ax1, res)
             
             # 子图2: 各股票持仓堆叠
-            Plotter._plot_positions_stacked(ax2, res, symbols)
+            Plotter._plot_positions_stacked(ax2, res, symbols, symbol_names)
             
             # 子图3: 累计盈亏
             initial_capital = res['equity'].iloc[0] if len(res) > 0 else 100000
@@ -270,7 +211,7 @@ class Plotter:
             return None
     
     @staticmethod
-    def _plot_positions_stacked(ax, res: pd.DataFrame, symbols: list):
+    def _plot_positions_stacked(ax, res: pd.DataFrame, symbols: list, symbol_names: dict):
         """绘制各股票持仓堆叠图"""
         colors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6']
         
@@ -278,16 +219,17 @@ class Plotter:
         position_values = []
         labels = []
         for i, symbol in enumerate(symbols):
-            shares_col = f"{symbol}_shares"
             cost_col = f"{symbol}_cost"
             
-            if shares_col not in res.columns:
+            if cost_col not in res.columns:
                 continue
             
             # 使用成本作为市值近似
-            if cost_col in res.columns:
-                position_values.append(res[cost_col])
-                labels.append(symbol)
+            values = res[cost_col]
+            if values.sum() > 0:  # 只添加有持仓的股票
+                position_values.append(values)
+                stock_name = symbol_names.get(symbol, "")
+                labels.append(f"{symbol} {stock_name}".strip() if stock_name else symbol)
         
         if not position_values:
             ax.text(0.5, 0.5, '无持仓数据', transform=ax.transAxes, ha='center', va='center')
@@ -297,19 +239,22 @@ class Plotter:
         ax.stackplot(res.index, position_values, labels=labels, 
                     colors=colors[:len(labels)], alpha=0.7)
         ax.set_ylabel("持仓成本 (元)")
-        ax.legend(loc='upper left', fontsize=8, ncol=len(labels))
+        ax.legend(loc='upper left', fontsize=8, ncol=min(len(labels), 3))
         ax.grid(True, linestyle=':', alpha=0.5)
         ax.set_title("各股票持仓分布", fontsize=10)
     
     @staticmethod
     def _plot_price_and_signals(ax, res: pd.DataFrame):
         """绘制价格与交易信号"""
-        ax.plot(res.index, res['price'], label='股价', color='#bdc3c7', alpha=0.6, linewidth=1)
+        # 价格曲线
+        if 'price' in res.columns:
+            ax.plot(res.index, res['price'], label='股价', color='#bdc3c7', alpha=0.6, linewidth=1)
         
         # 持仓均价
         if 'avg_price' in res.columns:
             avg_price_safe = res['avg_price'].replace(0, np.nan)
-            ax.plot(res.index, avg_price_safe, label='持仓均价', color='#f39c12', linestyle='--', linewidth=1.5)
+            if avg_price_safe.notna().any():
+                ax.plot(res.index, avg_price_safe, label='持仓均价', color='#f39c12', linestyle='--', linewidth=1.5)
 
         # 买入/卖出信号点
         if 'buy_signal' in res.columns:
