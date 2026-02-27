@@ -159,14 +159,14 @@ def main():
         traceback.print_exc()
 
     # 4. 执行基于换手率的筛选与回测
-    try:
-        run_selection_and_backtest(
-            provider, full_market, '换手率', '换手率', 
-            account_cfg, full_cfg, strategy_name
-        )
-    except Exception as e:
-        print(f"换手率回测环节执行失败: {e}")
-        traceback.print_exc()
+    # try:
+    #     run_selection_and_backtest(
+    #         provider, full_market, '换手率', '换手率', 
+    #         account_cfg, full_cfg, strategy_name
+    #     )
+    # except Exception as e:
+    #     print(f"换手率回测环节执行失败: {e}")
+    #     traceback.print_exc()
 
 
 if __name__ == "__main__":
