@@ -94,7 +94,7 @@ def run_backtest(provider, target_stock, target_name, account_cfg, full_cfg, str
 def run_selection_and_backtest(provider, full_market, sort_by_col, label_name, account_cfg, full_cfg, strategy_name='martingale'):
     """筛选股票并执行回测"""
     print(f"\n{'=' * 20} 基于【{label_name}】筛选 Top 20 {'=' * 20}")
-
+    print(full_market.nlargest(10, sort_by_col)[['代码', '名称', '最新价', sort_by_col]])
     # 筛选并打印
     top_20 = full_market.nlargest(1, sort_by_col)[['代码', '名称', '最新价', sort_by_col]]
     print(top_20.to_string(index=False))

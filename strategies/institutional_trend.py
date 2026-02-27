@@ -56,8 +56,9 @@ class InstitutionalTrendStrategy(BaseStrategy):
         # === 趋势强度判定 (大方向) ===
         # MA20 > MA60 且 MA20 向上
         df['Strong_Trend'] = (
-            (df['MA20'] > df['MA60']) & 
-            (df['MA20'].diff() > 0)
+            (df['MA20'] > 1.08*df['MA60']) &
+            # (df['MA20'].diff() > 0)
+            (df['MA60'].diff(5) >= 0)
         )
         
         # === 入场信号：初次启动 ===

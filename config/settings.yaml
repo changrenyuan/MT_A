@@ -20,9 +20,9 @@ martingale:
 # 终极趋势策略参数 v6.0
 institutional_trend:
   stop_loss_pct: 0.10      # 硬止损 (10%)
-  trailing_stop_pct: 0.25  # 移动止盈 (25%)
-  unit_size: 0.1           # 单次建仓比例 (10%)
-  max_units: 5             # 最大加仓次数 (总仓位 20%)
+  trailing_stop_pct: 0.20  # 移动止盈 (25%)
+  unit_size: 0.2          # 单次建仓比例 (10%)
+  max_units: 4            # 最大加仓次数 (总仓位 20%)
 
 # 策略默认参数 (向后兼容)
 strategy:

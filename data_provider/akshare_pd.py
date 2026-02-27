@@ -27,7 +27,7 @@ class AkShareProvider(BaseDataProvider):
         """
         now = datetime.now()
         today_str = now.strftime('%Y%m%d')
-        threshold_time = time(11, 30)
+        threshold_time = time(15, 30)
 
         # 路径定义
         cache_file_today = os.path.join(self.cache_dir, f"market_snapshot_{today_str}.csv")
