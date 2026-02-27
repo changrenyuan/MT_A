@@ -7,6 +7,7 @@ from strategies.institutional_trend import InstitutionalTrendStrategy
 from core.engine import BacktestEngine
 from utils.plotter import Plotter
 from utils.metrics import MetricsCalculator
+from utils.report_generator import ReportGenerator
 import yaml
 
 
@@ -83,14 +84,45 @@ def run_backtest(provider, target_stock, target_name, account_cfg, full_cfg, str
 
         # === 计算并显示绩效指标 ===
         metrics = MetricsCalculator.calculate(results, account_cfg['initial_capital'])
-        print(f"\n{'=' * 50}")
+        print(f"\n{'=' * 60}")
         print(f"📊 回测绩效报告")
-        print(f"{'=' * 50}")
-        for key, value in metrics.items():
-            print(f"  {key}: {value}")
-        print(f"{'=' * 50}")
+        print(f"{'=' * 60}")
+        
+        # 收益率指标
+        print(f"\n📈 收益率指标")
+        print(f"  累计收益率: {metrics['累计收益率']}")
+        print(f"  年化收益率: {metrics['年化收益率']}")
+        
+        # 风险指标
+        print(f"\n⚠️ 风险指标")
+        print(f"  最大回撤: {metrics['最大回撤']}")
+        print(f"  年化波动率: {metrics['年化波动率']}")
+        print(f"  下行波动率: {metrics['下行波动率']}")
+        
+        # 风险调整收益
+        print(f"\n🎯 风险调整收益")
+        print(f"  夏普比率: {metrics['夏普比率']}")
+        print(f"  索提诺比率: {metrics['索提诺比率']}")
+        print(f"  卡玛比率: {metrics['卡玛比率']}")
+        
+        # 交易统计
+        print(f"\n📊 交易统计")
+        print(f"  交易天数: {metrics['交易天数']}")
+        print(f"  交易次数: {metrics['交易次数']}")
+        print(f"  盈利次数: {metrics['盈利次数']} | 亏损次数: {metrics['亏损次数']}")
+        print(f"  胜率: {metrics['胜率']}")
+        print(f"  盈亏比: {metrics['盈亏比']}")
+        
+        print(f"{'=' * 60}")
 
-        # 绘图
+        # === 生成HTML报告 ===
+        report_gen = ReportGenerator(output_dir="reports")
+        report_path = report_gen.generate_html_report(
+            results, metrics, target_stock, strategy_name, account_cfg['initial_capital']
+        )
+        print(f"\n📄 HTML报告已生成: {report_path}")
+
+        # === 绘图 ===
         Plotter.plot_results(results, f"{target_stock} {target_name}", f"策略: {strategy_name}")
         
         return results
@@ -159,14 +191,14 @@ def main():
         traceback.print_exc()
 
     # 4. 执行基于换手率的筛选与回测
-    # try:
-    #     run_selection_and_backtest(
-    #         provider, full_market, '换手率', '换手率', 
-    #         account_cfg, full_cfg, strategy_name
-    #     )
-    # except Exception as e:
-    #     print(f"换手率回测环节执行失败: {e}")
-    #     traceback.print_exc()
+    try:
+        run_selection_and_backtest(
+            provider, full_market, '换手率', '换手率', 
+            account_cfg, full_cfg, strategy_name
+        )
+    except Exception as e:
+        print(f"换手率回测环节执行失败: {e}")
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
