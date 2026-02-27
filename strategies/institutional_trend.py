@@ -46,6 +46,7 @@ class InstitutionalTrendStrategy(BaseStrategy):
         self._exit_reason = ""
         self._exit_avg_price = 0.0
         self._partial_exited = False  # 是否已部分止盈
+        self._initial_shares = 0  # 初始买入股数，用于计算 units_held
 
     def prepare(self, data):
         """
@@ -71,7 +72,7 @@ class InstitutionalTrendStrategy(BaseStrategy):
         df['Bias'] = df['close'] / df['MA20']
         
         # === 5. 趋势强度判定 (优化: 降低门槛捕捉更早趋势) ===
-        # MA20 > MA60 * 1.05 且 MA60 三日内向上
+        # MA20 > MA60 * 1.02 且 MA60 三日内向上
         df['Strong_Trend'] = (
             (df['MA20'] > df['MA60'] * 1.02) & 
             (df['MA60'].diff(3) >= 0)
@@ -128,6 +129,7 @@ class InstitutionalTrendStrategy(BaseStrategy):
         print(f"单次仓位: {self.unit_size*100}% | 最大仓位: {self.unit_size*self.max_units*100}%")
         print(f"分档止盈: {self.profit_tier1*100}%→{self.trailing_tier1*100}% | {self.profit_tier2*100}%→{self.trailing_tier2*100}%")
         print(f"乖离率过滤: < 8% | 放量破位确认: > 1.2倍均量")
+        print(f"分批出场: {'启用' if self.enable_partial_exit else '禁用'} ({self.partial_exit_pct*100:.0f}%)")
         print(f"{'=' * 50}")
         
         return df
@@ -164,6 +166,7 @@ class InstitutionalTrendStrategy(BaseStrategy):
                     action = "BUY"
                     shares = self._calc_shares(price, self.unit_size)
                     if shares > 0:
+                        self._initial_shares = shares
                         self._update_status("ENTRY", price)
                         self._partial_exited = False
                     else:
@@ -175,12 +178,13 @@ class InstitutionalTrendStrategy(BaseStrategy):
                     action = "BUY"
                     shares = self._calc_shares(price, self.unit_size)
                     if shares > 0:
+                        self._initial_shares += shares
                         self._update_status("ADD", price)
                     else:
                         action = None
         
         # ========== B. 离场逻辑 (分档动态止盈) ==========
-        if self.units_held > 0:
+        if self.units_held > 0 and account.total_shares > 0:
             should_exit = False
             exit_reason = ""
             
@@ -198,16 +202,21 @@ class InstitutionalTrendStrategy(BaseStrategy):
             # 1. 动态移动止盈
             if self.peak_price > 0 and price < self.peak_price * (1 - dynamic_trailing):
                 # 检查是否启用分批出场
-                if self.enable_partial_exit and not self._partial_exited and current_profit > 0.15:
-                    # 分批卖出：先卖出一半
-                    action = "SELL"
-                    shares = math.floor(account.total_shares * self.partial_exit_pct / 100) * 100
-                    if shares > 0:
+                if self.enable_partial_exit and not self._partial_exited and current_profit > 0.10:
+                    # 分批卖出：先卖出指定比例
+                    # partial_exit_pct = 0.5 表示卖出 50%
+                    partial_shares = math.floor(account.total_shares * self.partial_exit_pct / 100) * 100
+                    if partial_shares > 0:
+                        action = "SELL"
+                        shares = partial_shares
                         self._partial_exited = True
                         exit_reason = f"分批止盈(卖{self.partial_exit_pct*100:.0f}%)"
                         self._exit_reason = exit_reason
                         self._exit_avg_price = self.avg_price
-                        # 不重置状态，继续持有剩余仓位
+                        # 更新 units_held (按比例减少)
+                        self.units_held = max(1, self.units_held - 1)
+                        # 重置 peak_price 以继续跟踪剩余仓位
+                        self.peak_price = price
                     else:
                         should_exit = True
                         exit_reason = f"分档止盈({dynamic_trailing*100:.0f}%)"
@@ -225,7 +234,7 @@ class InstitutionalTrendStrategy(BaseStrategy):
                 should_exit = True
                 exit_reason = "硬止损"
             
-            # 执行卖出
+            # 执行全部卖出
             if should_exit:
                 action = "SELL"
                 shares = account.total_shares
@@ -252,6 +261,7 @@ class InstitutionalTrendStrategy(BaseStrategy):
             self.avg_price = 0.0
             self.peak_price = 0.0
             self._partial_exited = False
+            self._initial_shares = 0
     
     def _calc_shares(self, price, pct):
         """计算买入股数"""
@@ -277,4 +287,9 @@ class InstitutionalTrendStrategy(BaseStrategy):
                 pnl_pct = (price / avg_price - 1) * 100
             else:
                 pnl_pct = 0.0
-            print(f"  <<< [卖出离场] {str_date} | 价格: {price:.2f} | 原因: {reason} | 收益: {pnl_pct:+.2f}%")
+            
+            # 判断是否部分卖出
+            if self._partial_exited and "分批" in reason:
+                print(f"  <-> [分批卖出] {str_date} | 价格: {price:.2f} | 原因: {reason} | 收益: {pnl_pct:+.2f}%")
+            else:
+                print(f"  <<< [卖出离场] {str_date} | 价格: {price:.2f} | 原因: {reason} | 收益: {pnl_pct:+.2f}%")
