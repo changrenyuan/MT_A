@@ -3,11 +3,11 @@
 
 支持图表：
 1. 股价走势与交易信号
-2. 总资产曲线
-3. 持仓市值
-4. 累计盈亏
-5. 回撤曲线
-6. 月度/年度收益分布
+2. 该股票持仓市值
+3. 该股票持仓成本
+4. 该股票浮动盈亏
+5. 回撤曲线（基于该股票）
+6. 月度收益分布
 """
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -28,7 +28,7 @@ class Plotter:
         
         Args:
             res: 回测结果 DataFrame
-            symbol: 股票代码
+            symbol: 股票代码/名称
             title_suffix: 标题后缀
             save_dir: 保存目录
             show: 是否显示图表 (默认 False，只保存)
@@ -46,15 +46,14 @@ class Plotter:
             # ========== 子图1: 价格与交易信号 ==========
             Plotter._plot_price_and_signals(ax1, res)
 
-            # ========== 子图2: 总资产 ==========
-            Plotter._plot_equity(ax2, res)
+            # ========== 子图2: 持仓市值 ==========
+            Plotter._plot_market_value(ax2, res)
 
-            # ========== 子图3: 持仓市值 ==========
-            Plotter._plot_market_value(ax3, res)
+            # ========== 子图3: 持仓成本 ==========
+            Plotter._plot_position_cost(ax3, res)
 
-            # ========== 子图4: 累计盈亏 ==========
-            initial_capital = res['equity'].iloc[0] if len(res) > 0 else 100000
-            Plotter._plot_pnl(ax4, res, initial_capital)
+            # ========== 子图4: 浮动盈亏 ==========
+            Plotter._plot_floating_pnl(ax4, res)
 
             # ========== 子图5: 回撤曲线 ==========
             Plotter._plot_drawdown(ax5, res)
@@ -104,7 +103,7 @@ class Plotter:
         
         saved_files = []
         
-        # 1. 为每只股票生成完整的6子图
+        # 1. 为每只股票生成完整的6子图（使用独立绩效数据）
         for symbol in symbols:
             # 检查是否有该股票的数据
             shares_col = f"{symbol}_shares"
@@ -114,21 +113,21 @@ class Plotter:
             stock_name = symbol_names.get(symbol, "")
             display_name = f"{symbol} {stock_name}".strip()
             
-            # 创建该股票的专属数据视图
+            # 创建该股票的专属数据视图（计算独立绩效）
             stock_res = Plotter._extract_stock_data(res, symbol)
             
             # 生成完整6子图
             filepath = Plotter.plot_results(
                 stock_res, 
                 display_name, 
-                "策略回测详情",
+                "个股回测详情",
                 save_dir=save_dir, 
                 show=show
             )
             if filepath:
                 saved_files.append(filepath)
         
-        # 2. 绘制组合总览图
+        # 2. 绘制组合总览图（使用账户级数据）
         overview_path = Plotter._plot_portfolio_overview(res, symbols, symbol_names, title, save_dir, show)
         if overview_path:
             saved_files.append(overview_path)
@@ -138,9 +137,13 @@ class Plotter:
     @staticmethod
     def _extract_stock_data(res: pd.DataFrame, symbol: str) -> pd.DataFrame:
         """
-        从多股票结果中提取单只股票的数据视图
+        从多股票结果中提取单只股票的独立绩效数据
         
-        创建一个类似单股票回测的 DataFrame，用于绑定绘图函数
+        计算该股票独立的：
+        - 持仓市值 = shares * price
+        - 持仓成本
+        - 浮动盈亏 = 持仓市值 - 持仓成本
+        - 回撤（基于持仓市值峰值）
         """
         stock_res = pd.DataFrame(index=res.index)
         
@@ -149,24 +152,28 @@ class Plotter:
         if price_col in res.columns:
             stock_res['price'] = res[price_col]
         else:
-            stock_res['price'] = res['price']  # 回退到参考价格
-        
-        # 基础字段 (组合级别)
-        stock_res['cash'] = res['cash']
-        stock_res['equity'] = res['equity']
-        stock_res['pnl'] = res['pnl']
-        stock_res['market_value'] = res['market_value']
+            stock_res['price'] = res['price']
         
         # 该股票的持仓信息
-        stock_res['total_shares'] = res.get(f'{symbol}_shares', 0)
-        stock_res['total_cost'] = res.get(f'{symbol}_cost', 0)
+        shares = res.get(f'{symbol}_shares', 0)
+        cost = res.get(f'{symbol}_cost', 0)
+        avg_price = res.get(f'{symbol}_avg_price', 0)
         
-        # 该股票的持仓均价
-        avg_col = f"{symbol}_avg_price"
-        if avg_col in res.columns:
-            stock_res['avg_price'] = res[avg_col]
-        else:
-            stock_res['avg_price'] = 0
+        stock_res['total_shares'] = shares
+        stock_res['total_cost'] = cost
+        stock_res['avg_price'] = avg_price
+        
+        # === 计算该股票独立的绩效指标 ===
+        
+        # 持仓市值 = 股数 * 当前价格
+        stock_res['market_value'] = shares * stock_res['price']
+        
+        # 浮动盈亏 = 持仓市值 - 持仓成本
+        stock_res['pnl'] = stock_res['market_value'] - cost
+        
+        # 该股票的"权益" = 空仓时的0 + 持仓市值
+        # 用于计算回撤
+        stock_res['equity'] = stock_res['market_value']
         
         # 该股票独立的交易信号
         buy_col = f"{symbol}_buy_signal"
@@ -181,23 +188,23 @@ class Plotter:
     @staticmethod
     def _plot_portfolio_overview(res: pd.DataFrame, symbols: list, symbol_names: dict,
                                  title: str, save_dir: str, show: bool = False):
-        """绘制组合总览图"""
+        """绘制组合总览图（使用账户级数据）"""
         try:
             plt.rcParams['font.sans-serif'] = ['SimHei']
             plt.rcParams['axes.unicode_minus'] = False
             
             fig, axes = plt.subplots(3, 1, figsize=(16, 14), sharex=True)
-            fig.suptitle(title, fontsize=16, fontweight='bold')
+            fig.suptitle(f"{title} - 组合总览", fontsize=16, fontweight='bold')
             
             ax1, ax2, ax3 = axes
             
-            # 子图1: 总资产曲线
+            # 子图1: 总资产曲线（账户级）
             Plotter._plot_equity(ax1, res)
             
             # 子图2: 各股票持仓堆叠
             Plotter._plot_positions_stacked(ax2, res, symbols, symbol_names)
             
-            # 子图3: 累计盈亏
+            # 子图3: 累计盈亏（账户级）
             initial_capital = res['equity'].iloc[0] if len(res) > 0 else 100000
             Plotter._plot_pnl(ax3, res, initial_capital)
             
@@ -225,19 +232,22 @@ class Plotter:
         """绘制各股票持仓堆叠图"""
         colors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6']
         
-        # 收集各股票的市值
+        # 收集各股票的持仓市值
         position_values = []
         labels = []
         for i, symbol in enumerate(symbols):
-            cost_col = f"{symbol}_cost"
+            shares_col = f"{symbol}_shares"
+            price_col = f"{symbol}_price"
             
-            if cost_col not in res.columns:
+            if shares_col not in res.columns:
                 continue
             
-            # 使用成本作为市值近似
-            values = res[cost_col]
-            if values.sum() > 0:  # 只添加有持仓的股票
-                position_values.append(values)
+            shares = res[shares_col]
+            price = res[price_col] if price_col in res.columns else res['price']
+            market_value = shares * price
+            
+            if market_value.sum() > 0:
+                position_values.append(market_value)
                 stock_name = symbol_names.get(symbol, "")
                 labels.append(f"{symbol} {stock_name}".strip() if stock_name else symbol)
         
@@ -248,10 +258,10 @@ class Plotter:
         # 堆叠面积图
         ax.stackplot(res.index, position_values, labels=labels, 
                     colors=colors[:len(labels)], alpha=0.7)
-        ax.set_ylabel("持仓成本 (元)")
+        ax.set_ylabel("持仓市值 (元)")
         ax.legend(loc='upper left', fontsize=8, ncol=min(len(labels), 3))
         ax.grid(True, linestyle=':', alpha=0.5)
-        ax.set_title("各股票持仓分布", fontsize=10)
+        ax.set_title("各股票持仓市值分布", fontsize=10)
     
     @staticmethod
     def _plot_price_and_signals(ax, res: pd.DataFrame):
@@ -284,7 +294,7 @@ class Plotter:
     
     @staticmethod
     def _plot_equity(ax, res: pd.DataFrame):
-        """绘制总资产曲线"""
+        """绘制总资产曲线（账户级）"""
         ax.plot(res.index, res['equity'], label='总资产', color='#2980b9', linewidth=2)
         ax.axhline(y=res['equity'].iloc[0], color='gray', linestyle='--', linewidth=0.8, label='初始资金', alpha=0.7)
         ax.fill_between(res.index, res['equity'], res['equity'].iloc[0], 
@@ -296,21 +306,67 @@ class Plotter:
         ax.set_ylabel("金额 (元)")
         ax.legend(loc='upper left', fontsize=8)
         ax.grid(True, linestyle=':', alpha=0.5)
-        ax.set_title("总资产曲线", fontsize=10)
+        ax.set_title("账户总资产曲线", fontsize=10)
     
     @staticmethod
     def _plot_market_value(ax, res: pd.DataFrame):
         """绘制持仓市值"""
-        ax.fill_between(res.index, res['market_value'], 0, color='#3498db', alpha=0.4, label='持仓市值')
-        ax.plot(res.index, res['market_value'], color='#2980b9', linewidth=1.5)
+        market_value = res['market_value']
+        ax.fill_between(res.index, market_value, 0, color='#3498db', alpha=0.4, label='持仓市值')
+        ax.plot(res.index, market_value, color='#2980b9', linewidth=1.5)
         ax.set_ylabel("金额 (元)")
         ax.legend(loc='upper left', fontsize=8)
         ax.grid(True, linestyle=':', alpha=0.5)
         ax.set_title("持仓市值", fontsize=10)
     
     @staticmethod
+    def _plot_position_cost(ax, res: pd.DataFrame):
+        """绘制持仓成本"""
+        cost = res['total_cost']
+        shares = res['total_shares']
+        
+        ax.fill_between(res.index, cost, 0, color='#e67e22', alpha=0.4, label='持仓成本')
+        ax.plot(res.index, cost, color='#d35400', linewidth=1.5)
+        
+        # 右侧Y轴显示持仓股数
+        ax2 = ax.twinx()
+        ax2.bar(res.index, shares, color='#9b59b6', alpha=0.3, width=1.5, label='持仓股数')
+        ax2.set_ylabel("持仓股数", color='#9b59b6', fontsize=8)
+        ax2.tick_params(axis='y', labelcolor='#9b59b6', labelsize=7)
+        
+        ax.set_ylabel("持仓成本 (元)")
+        ax.legend(loc='upper left', fontsize=8)
+        ax.grid(True, linestyle=':', alpha=0.5)
+        ax.set_title("持仓成本与股数", fontsize=10)
+    
+    @staticmethod
+    def _plot_floating_pnl(ax, res: pd.DataFrame):
+        """绘制浮动盈亏"""
+        pnl = res['pnl']
+        
+        # 盈亏金额 - 正负阴影
+        ax.fill_between(res.index, pnl, 0, where=(pnl >= 0), 
+                       color='#e74c3c', alpha=0.4, label='浮盈')
+        ax.fill_between(res.index, pnl, 0, where=(pnl < 0), 
+                       color='#3498db', alpha=0.4, label='浮亏')
+        ax.plot(res.index, pnl, color='#7f8c8d', linewidth=1.5)
+        ax.axhline(0, color='black', linestyle='-', linewidth=0.5)
+        
+        ax.set_ylabel("浮动盈亏 (元)")
+        ax.legend(loc='upper left', fontsize=8)
+        ax.grid(True, linestyle=':', alpha=0.5)
+        ax.set_title("持仓浮动盈亏 (红=盈利, 蓝=亏损)", fontsize=10)
+        
+        # 标注最终盈亏
+        final_pnl = pnl.iloc[-1] if len(pnl) > 0 else 0
+        color = '#e74c3c' if final_pnl >= 0 else '#3498db'
+        ax.text(0.02, 0.95, f"当前浮盈: {final_pnl:+,.0f}元", 
+                transform=ax.transAxes, fontsize=10, fontweight='bold',
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
+    
+    @staticmethod
     def _plot_pnl(ax, res: pd.DataFrame, initial_capital: float):
-        """绘制累计盈亏"""
+        """绘制累计盈亏（账户级）"""
         pnl = res['pnl']
         
         # 盈亏金额 - 正负阴影
@@ -324,7 +380,7 @@ class Plotter:
         ax.set_ylabel("盈亏金额 (元)")
         ax.legend(loc='upper left', fontsize=8)
         ax.grid(True, linestyle=':', alpha=0.5)
-        ax.set_title("累计盈亏 (红色=盈利, 蓝色=亏损)", fontsize=10)
+        ax.set_title("账户累计盈亏 (红色=盈利, 蓝色=亏损)", fontsize=10)
 
         # 右侧 Y 轴 - 盈亏比例
         ax_twin = ax.twinx()
@@ -344,7 +400,16 @@ class Plotter:
     @staticmethod
     def _plot_drawdown(ax, res: pd.DataFrame):
         """绘制回撤曲线"""
+        # 使用 equity 字段计算回撤
         equity = res['equity']
+        
+        # 如果全是0，显示空图
+        if equity.sum() == 0:
+            ax.text(0.5, 0.5, '无持仓数据', transform=ax.transAxes, ha='center', va='center')
+            ax.set_title("回撤曲线", fontsize=10)
+            return
+        
+        # 计算从峰值的回撤
         max_equity = equity.cummax()
         max_equity_safe = max_equity.replace(0, np.nan)
         drawdowns = ((equity - max_equity) / max_equity_safe).fillna(0)
@@ -355,14 +420,15 @@ class Plotter:
         
         # 标注最大回撤
         max_dd = drawdowns.min()
-        ax.axhline(max_dd, color='#c0392b', linestyle='--', linewidth=1, alpha=0.7)
-        ax.text(0.98, 0.05, f"最大回撤: {max_dd*100:.2f}%", 
-                transform=ax.transAxes, fontsize=10, fontweight='bold',
-                horizontalalignment='right', color='#c0392b')
+        if max_dd < 0:
+            ax.axhline(max_dd, color='#c0392b', linestyle='--', linewidth=1, alpha=0.7)
+            ax.text(0.98, 0.05, f"最大回撤: {max_dd*100:.2f}%", 
+                    transform=ax.transAxes, fontsize=10, fontweight='bold',
+                    horizontalalignment='right', color='#c0392b')
         
         ax.set_ylabel("回撤")
         ax.grid(True, linestyle=':', alpha=0.5)
-        ax.set_title("回撤曲线", fontsize=10)
+        ax.set_title("持仓市值回撤曲线", fontsize=10)
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y*100:.1f}%'))
     
     @staticmethod
@@ -370,6 +436,12 @@ class Plotter:
         """绘制滚动收益 (月度)"""
         try:
             equity = res['equity']
+            
+            # 如果全是0，显示空图
+            if equity.sum() == 0:
+                ax.text(0.5, 0.5, '无持仓数据', transform=ax.transAxes, ha='center', va='center')
+                ax.set_title("月度收益率", fontsize=10)
+                return
             
             # 计算月度收益
             monthly = equity.resample('M').last()
