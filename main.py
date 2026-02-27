@@ -39,10 +39,18 @@ def build_strategy_config(strategy_name, account_cfg, full_cfg):
     elif strategy_name == 'institutional_trend':
         return {
             'stop_loss_pct': strategy_specific.get('stop_loss_pct', default_cfg.get('stop_loss_pct', 0.10)),
-            'trailing_stop_pct': strategy_specific.get('trailing_stop_pct', default_cfg.get('trailing_stop_pct', 0.25)),
+            'trailing_stop_pct': strategy_specific.get('trailing_stop_pct', default_cfg.get('trailing_stop_pct', 0.20)),
             'unit_size': strategy_specific.get('unit_size', default_cfg.get('unit_size', 0.1)),
-            'max_units': strategy_specific.get('max_units', default_cfg.get('max_units', 2)),
+            'max_units': strategy_specific.get('max_units', default_cfg.get('max_units', 4)),
             'total_capital': account_cfg['initial_capital'],
+            # 分档止盈参数
+            'profit_tier1': strategy_specific.get('profit_tier1', default_cfg.get('profit_tier1', 0.30)),
+            'trailing_tier1': strategy_specific.get('trailing_tier1', default_cfg.get('trailing_tier1', 0.15)),
+            'profit_tier2': strategy_specific.get('profit_tier2', default_cfg.get('profit_tier2', 0.50)),
+            'trailing_tier2': strategy_specific.get('trailing_tier2', default_cfg.get('trailing_tier2', 0.10)),
+            # 分批出场参数
+            'partial_exit_pct': strategy_specific.get('partial_exit_pct', default_cfg.get('partial_exit_pct', 0.5)),
+            'enable_partial_exit': strategy_specific.get('enable_partial_exit', default_cfg.get('enable_partial_exit', False)),
         }
     else:
         raise ValueError(f"未知策略: {strategy_name}")

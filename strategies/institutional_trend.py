@@ -1,11 +1,11 @@
 """
-终极趋势策略 v6.0 (Ultimate Trend Strategy)
+终极趋势策略 v6.1 (专业优化版)
 
-核心逻辑：
-1. 初始建仓：趋势初步确立时入场 10%
-2. 回调加仓：股价回踩 MA20 支撑位且企稳时追加 10%
-3. 动态止盈：25% 大格局移动止盈
-4. 自动接力：若被洗出，只要趋势大框架（MA60）未坏，随时准备二次入场
+核心优化点：
+1. 分档动态止盈：收益越高，止盈越紧，防止"坐过山车"
+2. 乖离率过滤 (Bias Check)：防止在远离均线时盲目追高入场
+3. 放量破位确认：避免被缩量假跌破洗出
+4. 分批出场逻辑：达到目标位后先套现一部分
 """
 import math
 import pandas as pd
@@ -14,16 +14,26 @@ from .base import BaseStrategy
 
 
 class InstitutionalTrendStrategy(BaseStrategy):
-    """终极趋势策略 v6.0"""
+    """终极趋势策略 v6.1 (专业优化版)"""
     
     def __init__(self, cfg):
         self.cfg = cfg
         # 参数配置
         self.stop_loss_pct = cfg.get('stop_loss_pct', 0.10)          # 硬止损 10%
-        self.trailing_stop_pct = cfg.get('trailing_stop_pct', 0.25)  # 移动止盈 25%
+        self.trailing_stop_pct = cfg.get('trailing_stop_pct', 0.20)  # 默认移动止盈 20%
         self.unit_size = cfg.get('unit_size', 0.1)                   # 单次建仓比例 10%
-        self.max_units = cfg.get('max_units', 2)                     # 最大加仓次数
+        self.max_units = cfg.get('max_units', 4)                     # 最大加仓次数
         self.initial_capital = cfg.get('total_capital', 100000.0)    # 总资金
+        
+        # 分档止盈参数
+        self.profit_tier1 = cfg.get('profit_tier1', 0.30)   # 第一档: 利润 30%
+        self.trailing_tier1 = cfg.get('trailing_tier1', 0.15)  # 对应止盈 15%
+        self.profit_tier2 = cfg.get('profit_tier2', 0.50)   # 第二档: 利润 50%
+        self.trailing_tier2 = cfg.get('trailing_tier2', 0.10)  # 对应止盈 10%
+        
+        # 分批出场参数
+        self.partial_exit_pct = cfg.get('partial_exit_pct', 0.5)  # 分批卖出比例 50%
+        self.enable_partial_exit = cfg.get('enable_partial_exit', True)  # 是否启用分批出场
         
         # 内部状态
         self.units_held = 0       # 当前持有头寸份数
@@ -32,10 +42,10 @@ class InstitutionalTrendStrategy(BaseStrategy):
         self.indicators_df = None
         self.current_idx = 0
         
-        # 用于记录交易信息 (在重置状态前保存)
-        self._exit_reason = ""    # 退出原因
-        self._exit_avg_price = 0.0  # 退出时的成本价 (用于计算收益)
-        self._exit_peak_price = 0.0 # 退出时的峰值价
+        # 用于记录交易信息
+        self._exit_reason = ""
+        self._exit_avg_price = 0.0
+        self._partial_exited = False  # 是否已部分止盈
 
     def prepare(self, data):
         """
@@ -43,56 +53,68 @@ class InstitutionalTrendStrategy(BaseStrategy):
         """
         df = data.copy()
         
-        # === 核心均线系统 ===
+        # === 1. 基础均线系统 ===
         df['MA10'] = df['close'].rolling(10).mean()
         df['MA20'] = df['close'].rolling(20).mean()
         df['MA60'] = df['close'].rolling(60).mean()
         
-        # === MACD 指标 ===
+        # === 2. MACD 指标 ===
         df['DIF'] = df['close'].ewm(span=12, adjust=False).mean() - df['close'].ewm(span=26, adjust=False).mean()
         df['DEA'] = df['DIF'].ewm(span=9, adjust=False).mean()
         df['MACD'] = (df['DIF'] - df['DEA']) * 2
         
-        # === 趋势强度判定 (大方向) ===
-        # MA20 > MA60 且 MA20 向上
+        # === 3. 成交量均线 ===
+        df['MA_Vol'] = df['volume'].rolling(20).mean()
+        
+        # === 4. 乖离率 (Bias) ===
+        # 股价/MA20，用于防止追高
+        df['Bias'] = df['close'] / df['MA20']
+        
+        # === 5. 趋势强度判定 (优化: 降低门槛捕捉更早趋势) ===
+        # MA20 > MA60 * 1.05 且 MA60 三日内向上
         df['Strong_Trend'] = (
-            (df['MA20'] > 1.08*df['MA60']) &
-            # (df['MA20'].diff() > 0)
-            (df['MA60'].diff(5) >= 0)
+            (df['MA20'] > df['MA60'] * 1.02) & 
+            (df['MA60'].diff(3) >= 0)
         )
         
-        # === 入场信号：初次启动 ===
-        # MA10 上穿 MA20 (金叉)
+        # === 6. 入场信号 ===
+        # MA10 上穿 MA20
         df['MA10_Cross_Up'] = (
             (df['MA10'] > df['MA20']) & 
             (df['MA10'].shift(1) <= df['MA20'].shift(1))
         )
         
-        # MACD 多头排列 (DIF > DEA 且 DIF > 0)
+        # MACD 多头
         df['MACD_Bullish'] = (df['DIF'] > df['DEA']) & (df['DIF'] > 0)
         
-        # 初始入场条件：MA10金叉MA20 或 已处于多头排列
-        df['Initial_Entry'] = df['MA10_Cross_Up'].fillna(False)
-        
-        # === 加仓信号：回踩支撑 ===
-        # 最低价靠近 MA20 上方 2% 范围内，且收盘价 > 开盘价 (阳线企稳)
+        # === 7. 加仓信号：回踩支撑 ===
         df['Pullback_Support'] = (
             (df['low'] < df['MA20'] * 1.02) &   # 触及支撑区
             (df['low'] > df['MA20'] * 0.98) &   # 但未有效跌破
             (df['close'] > df['open']) &        # 收阳线
-            (df['close'] > df['MA20'])          # 收盘站稳 MA20
+            (df['close'] > df['MA20']) &        # 收盘站稳 MA20
+            (df['Bias'] < 1.05)                 # 乖离率不过大
         )
         
-        # === 离场信号 ===
-        # 趋势破坏：价格跌破 MA20 的 2% 缓冲区
-        df['Trend_Broken'] = df['close'] < df['MA20'] * 0.98
+        # === 8. 离场信号：放量破位确认 ===
+        # 收盘跌破 MA20 的 2% 缓冲区 且 成交量放大
+        df['Trend_Broken'] = (
+            (df['close'] < df['MA20'] * 0.98) & 
+            (df['volume'] > df['MA_Vol'] * 1.2)
+        )
         
-        # 填充 NaN 值 (pandas 2.0+ 语法)
+        # 缩量跌破 (可能是假跌破，不触发离场)
+        df['Weak_Break'] = (
+            (df['close'] < df['MA20'] * 0.98) & 
+            (df['volume'] < df['MA_Vol'] * 0.8)
+        )
+        
+        # 填充 NaN 值
         df = df.ffill().bfill()
         
         # 将布尔列中的 NaN 替换为 False
-        bool_cols = ['Strong_Trend', 'MA10_Cross_Up', 'MACD_Bullish', 'Initial_Entry', 
-                     'Pullback_Support', 'Trend_Broken']
+        bool_cols = ['Strong_Trend', 'MA10_Cross_Up', 'MACD_Bullish', 'Pullback_Support', 
+                     'Trend_Broken', 'Weak_Break']
         for col in bool_cols:
             df[col] = df[col].fillna(False)
         
@@ -100,10 +122,12 @@ class InstitutionalTrendStrategy(BaseStrategy):
         self.current_idx = 0
         
         print(f"\n{'=' * 50}")
-        print(f"终极趋势策略 v6.0 初始化完成")
+        print(f"终极趋势策略 v6.1 (专业优化版) 初始化完成")
         print(f"{'=' * 50}")
-        print(f"止损: {self.stop_loss_pct*100}% | 移动止盈: {self.trailing_stop_pct*100}%")
+        print(f"止损: {self.stop_loss_pct*100}% | 默认止盈: {self.trailing_stop_pct*100}%")
         print(f"单次仓位: {self.unit_size*100}% | 最大仓位: {self.unit_size*self.max_units*100}%")
+        print(f"分档止盈: {self.profit_tier1*100}%→{self.trailing_tier1*100}% | {self.profit_tier2*100}%→{self.trailing_tier2*100}%")
+        print(f"乖离率过滤: < 8% | 放量破位确认: > 1.2倍均量")
         print(f"{'=' * 50}")
         
         return df
@@ -130,18 +154,22 @@ class InstitutionalTrendStrategy(BaseStrategy):
         
         # ========== A. 入场与加仓逻辑 ==========
         if row['Strong_Trend']:
-            # --- 1. 初次建仓 ---
+            # === 1. 初次建仓 ===
             if self.units_held == 0:
-                # 条件：MA10 > MA20 且 MACD 多头
-                if row['Initial_Entry'] or (row['MA10'] > row['MA20'] and row['MACD_Bullish']):
+                # 乖离率过滤：只有在距离 MA20 不远时才入场
+                bias_ok = row['Bias'] < 1.08
+                
+                # 入场条件：MA10 > MA20 且 MACD 多头 且 不追高
+                if (row['MA10_Cross_Up'] or (row['MA10'] > row['MA20'] and row['MACD_Bullish'])) and bias_ok:
                     action = "BUY"
                     shares = self._calc_shares(price, self.unit_size)
                     if shares > 0:
                         self._update_status("ENTRY", price)
+                        self._partial_exited = False
                     else:
-                        action = None  # 资金不足，取消买入
+                        action = None
             
-            # --- 2. 回调加仓 ---
+            # === 2. 回调加仓 ===
             elif self.units_held < self.max_units:
                 if row['Pullback_Support']:
                     action = "BUY"
@@ -151,22 +179,48 @@ class InstitutionalTrendStrategy(BaseStrategy):
                     else:
                         action = None
         
-        # ========== B. 离场逻辑 ==========
+        # ========== B. 离场逻辑 (分档动态止盈) ==========
         if self.units_held > 0:
             should_exit = False
             exit_reason = ""
             
-            # 1. 移动止盈 (保护利润)
-            if self.peak_price > 0 and price < self.peak_price * (1 - self.trailing_stop_pct):
-                should_exit = True
-                exit_reason = "移动止盈"
+            # 计算当前浮盈
+            current_profit = (price / self.avg_price - 1) if self.avg_price > 0 else 0
             
-            # 2. 趋势终结 (跌破 MA20 缓冲区)
+            # --- 核心优化：分档动态止盈 ---
+            # 利润越高，止盈位拉得越近，防止"坐过山车"
+            dynamic_trailing = self.trailing_stop_pct  # 默认 20%
+            if current_profit > self.profit_tier2:     # 利润 > 50%
+                dynamic_trailing = self.trailing_tier2  # 回撤 10% 就跑
+            elif current_profit > self.profit_tier1:   # 利润 > 30%
+                dynamic_trailing = self.trailing_tier1  # 回撤 15% 就跑
+            
+            # 1. 动态移动止盈
+            if self.peak_price > 0 and price < self.peak_price * (1 - dynamic_trailing):
+                # 检查是否启用分批出场
+                if self.enable_partial_exit and not self._partial_exited and current_profit > 0.15:
+                    # 分批卖出：先卖出一半
+                    action = "SELL"
+                    shares = math.floor(account.total_shares * self.partial_exit_pct / 100) * 100
+                    if shares > 0:
+                        self._partial_exited = True
+                        exit_reason = f"分批止盈(卖{self.partial_exit_pct*100:.0f}%)"
+                        self._exit_reason = exit_reason
+                        self._exit_avg_price = self.avg_price
+                        # 不重置状态，继续持有剩余仓位
+                    else:
+                        should_exit = True
+                        exit_reason = f"分档止盈({dynamic_trailing*100:.0f}%)"
+                else:
+                    should_exit = True
+                    exit_reason = f"分档止盈({dynamic_trailing*100:.0f}%)"
+            
+            # 2. 放量破位确认 (避免缩量假跌破)
             elif row['Trend_Broken']:
                 should_exit = True
-                exit_reason = "趋势破位"
+                exit_reason = "放量破位"
             
-            # 3. 硬止损 (成本价亏损)
+            # 3. 硬止损 (成本价亏损 10%)
             elif self.avg_price > 0 and price < self.avg_price * (1 - self.stop_loss_pct):
                 should_exit = True
                 exit_reason = "硬止损"
@@ -175,10 +229,8 @@ class InstitutionalTrendStrategy(BaseStrategy):
             if should_exit:
                 action = "SELL"
                 shares = account.total_shares
-                # 先保存交易信息，再重置状态
                 self._exit_reason = exit_reason
                 self._exit_avg_price = self.avg_price
-                self._exit_peak_price = self.peak_price
                 self._update_status("EXIT", price)
         
         self.current_idx += 1
@@ -192,13 +244,14 @@ class InstitutionalTrendStrategy(BaseStrategy):
             self.peak_price = price
         elif action_type == "ADD":
             # 加权平均成本
-            total_shares_before = self.units_held
-            self.avg_price = (self.avg_price * total_shares_before + price) / (total_shares_before + 1)
+            total_units = self.units_held
+            self.avg_price = (self.avg_price * total_units + price) / (total_units + 1)
             self.units_held += 1
         elif action_type == "EXIT":
             self.units_held = 0
             self.avg_price = 0.0
             self.peak_price = 0.0
+            self._partial_exited = False
     
     def _calc_shares(self, price, pct):
         """计算买入股数"""
@@ -219,7 +272,6 @@ class InstitutionalTrendStrategy(BaseStrategy):
         
         elif action_type == "SELL":
             reason = self._exit_reason if self._exit_reason else '未知'
-            # 使用保存的成本价计算收益
             avg_price = self._exit_avg_price if self._exit_avg_price > 0 else self.avg_price
             if avg_price > 0:
                 pnl_pct = (price / avg_price - 1) * 100

@@ -4,12 +4,12 @@ strategy_name: "institutional_trend"
 
 # 基础账户配置
 account:
-  initial_capital: 1000000.0
+  initial_capital: 100000.0
   commission_rate: 0.0003  # 手续费万三
 
 # 马丁格尔策略参数
 martingale:
-  first_amount: 100000.0    # 第一笔买入金额
+  first_amount: 10000.0    # 第一笔买入金额
   base_drop: 0.03          # 基础跌幅 (3%)
   step_factor: 1.1         # 跌幅步进 (每层跌幅增加倍数)
   growth_factor: 1.5       # 资金倍增 (每层投入增加倍数)
@@ -17,26 +17,41 @@ martingale:
   take_profit_pct: 0.08    # 止盈目标 (8%)
   stop_loss_pct: 0.15      # 全仓止损 (15%)
 
-# 终极趋势策略参数 v6.0
+# 终极趋势策略参数 v6.1 (专业优化版)
 institutional_trend:
-  stop_loss_pct: 0.10      # 硬止损 (10%)
-  trailing_stop_pct: 0.20  # 移动止盈 (25%)
-  unit_size: 0.2          # 单次建仓比例 (10%)
-  max_units: 4            # 最大加仓次数 (总仓位 20%)
+  stop_loss_pct: 0.10          # 硬止损 (10%)
+  trailing_stop_pct: 0.20      # 默认移动止盈 (20%)
+  unit_size: 0.1               # 单次建仓比例 (10%)
+  max_units: 4                 # 最大加仓次数 (总仓位 40%)
+  
+  # 分档动态止盈参数
+  profit_tier1: 0.30           # 第一档: 利润达到 30%
+  trailing_tier1: 0.15         # 对应止盈收紧至 15%
+  profit_tier2: 0.50           # 第二档: 利润达到 50%
+  trailing_tier2: 0.10         # 对应止盈收紧至 10%
+  
+  # 分批出场参数
+  partial_exit_pct: 0.5        # 分批卖出比例 (50%)
+  enable_partial_exit: false   # 是否启用分批出场
 
 # 策略默认参数 (向后兼容)
 strategy:
-  first_amount: 100000.0
+  first_amount: 10000.0
   base_drop: 0.03
   step_factor: 1.1
   growth_factor: 1.5
   max_steps: 5
   take_profit_pct: 0.08
   stop_loss_pct: 0.10
-  trailing_stop_pct: 0.25
-  position_size: 0.1
+  trailing_stop_pct: 0.20
   unit_size: 0.1
-  max_units: 2
+  max_units: 4
+  profit_tier1: 0.30
+  trailing_tier1: 0.15
+  profit_tier2: 0.50
+  trailing_tier2: 0.10
+  partial_exit_pct: 0.5
+  enable_partial_exit: false
 
 # 启动与退出机制
 mechanism:
