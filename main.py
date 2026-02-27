@@ -96,8 +96,9 @@ def run_single_backtest(provider, target_stock, target_name, account_cfg, full_c
         )
         print(f"\n📄 HTML报告已生成: {report_path}")
 
-        # 绘图
-        Plotter.plot_results(results, f"{target_stock} {target_name}", f"策略: {strategy_name}")
+        # 绘图 (保存到文件)
+        Plotter.plot_results(results, f"{target_stock} {target_name}", f"策略: {strategy_name}", 
+                            save_dir="reports/charts", show=False)
         
         return results
         
@@ -188,6 +189,10 @@ def run_multi_stock_backtest(provider, stock_list, account_cfg, full_cfg, strate
             results, metrics, f"MULTI_{symbols_str}", strategy_name, account_cfg['initial_capital']
         )
         print(f"\n📄 HTML报告已生成: {report_path}")
+        
+        # 生成图表 (每只股票一张 + 组合总览)
+        print(f"\n📈 生成图表...")
+        Plotter.plot_multi_stock(results, symbols, "多股票组合回测", save_dir="reports/charts")
         
         return results
         
